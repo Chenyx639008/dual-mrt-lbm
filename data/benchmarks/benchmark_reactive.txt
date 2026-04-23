@@ -1,0 +1,98 @@
+# ================================================================
+# BM-3: 反应-扩散基准（Phase 2 + Phase 4 验证）
+# ----------------------------------------------------------------
+# 目标：一维反应-扩散稳态剖面验证。
+#       平板水合物（上半域，y > NY/2），水相（下半域），零对流。
+#
+# 解析解（稳态，1D，反应边界在 y = NY/2）：
+#   Cm(y) = Csat * (1 - exp(-(NY/2 - y) * sqrt(k_r_eff / D_latt)))
+#   其中 k_r_eff = k0_rxn_latt * exp(-Ea/RT) * (1 - Cm/Csat)
+#   近似（线性化）：Cm(y) ≈ Cm∞ * (1-exp(-y/L_r)), L_r = sqrt(D/k_r)
+#
+# 验证步骤：
+#   1) 运行至浓度场稳态
+#   2) 取 y 方向浓度剖面 Cm(y)（对 x 平均）
+#   3) 拟合指数衰减，比较特征长度 L_r_sim vs L_r_analytic = sqrt(D_latt/k_r_latt)
+#   4) 相对误差 < 5%
+#
+# 几何策略：使用 morph=1, r_obs=0 的空域，但需要在上半部
+#   手动设置水合物区域。当前实现：coat_thick>0 产生大颗粒水合物壳；
+#   此测试用 morph=1, r_mid=60（大水合物填充圆，接近平板近似）
+# ================================================================
+
+# ---- 几何：大水合物填充（近平板近似）----
+morph           1
+r_obs           0           # 无固体核
+l_gap           300
+coat_thick      0
+r_mid           60          # pore-fill 水合物大圆（r=60，在300×300域中接近平板）
+geom_file
+
+# ---- 流体 ----
+init_eq         1
+Sw              0.8         # 水相主导
+water_seed      42
+
+# ---- 零驱动（纯扩散测试）----
+Gx              0.0
+Gy              0.0
+drive_mode      1
+drive           1
+
+# ---- 密度/松弛 ----
+rhoA_ini_h      6.6293
+rhoA_ini_l      0.34127
+rhoB_ini_h      0.41931
+rhoB_ini_l      0.05
+tau_p_a         0.593418
+tau_p_b         0.515411
+GAB             0.24
+GBA             0.24
+sigmaA          0.08
+kappa           0.7698
+thetaA_quartz_deg   30
+thetaA_hydrate_deg  80
+
+# ---- 时间推进 ----
+eq_max_steps        5000
+eq_tol_rel          1e-4
+eq_need_consec      50
+flow_max_steps      100000
+flow_tol_rel        1e-6
+flow_need_consec    500
+
+OUTPUT_EVERY        10000
+ENABLE_CKPT         0
+
+# ---- 水合物：热场 + 浓度场 + 反应，禁用 VOP 翻转 ----
+hydrate_enable        1
+hydrate_start_step    0
+T0_init               278.15
+T0_inlet              278.15  # 等温（T 恒定，排除热效应）
+
+lambda_fluid          0.6
+lambda_hydrate        0.49
+lambda_solid          0.9
+rhocp_fluid           4200000.0
+rhocp_hydrate         2100000.0
+rhocp_solid           2000000.0
+
+# 扩散参数：D_latt = 1.85e-9 * 1e-6 / (1e-5)^2 = 1.85e-5
+D_mol_water           1.85e-9
+Henry_KH              0.1
+Cm_init               0.0     # 初始水相无溶解甲烷
+
+# 反应动力学（适中速率，确保扩散层可分辨）：
+# k_r_latt = k0_rxn * dt/dx = 1.0 * 1e-6 / 1e-5 = 0.1
+k0_rxn                1.0     # mol/(m²·s·Pa)，小值确保 L_r = sqrt(D/k_r) >> 1 格
+Ea_rxn                0.0     # 等温简化：关闭 Arrhenius 温度依赖
+e1_peq                33.12
+e2_peq               -9005.5
+latent_heat           0.0     # 关闭潜热
+
+# VOP 冻结（Vm_hydrate 极大 → Vh 减少极慢，保持几何稳定）
+Vm_hydrate            2.274e-5
+Vh_init               1.0
+vop_terminate_frac    0.0001  # 极低阈值，相当于不终止
+dx_phys               1.0e-5
+dt_phys               1.0e-6

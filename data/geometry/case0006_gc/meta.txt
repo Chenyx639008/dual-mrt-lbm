@@ -1,0 +1,19 @@
+start_time: 2025-12-14 22:38:13
+mode: gc
+image: sand_pore0028-3.tif
+polarity: white_is_pore
+threshold: 200
+center_crop: (200, 200)
+resize_to: (600, 600)
+clean: True, open_iters: 1, close_iters: 0, min_obj: 50, min_hole: 50
+gra: 120
+cha(pf): 1.0
+sat_max: 0.2
+seed: 2001
+Sh_raw_final:   0.200009
+Sh_clean_final: 0.193484
+preserve_sh_after_clean: True
+log_every: 1000
+edt_every(pf): 50
+max_steps: None
+elapsed_seconds: 4.007

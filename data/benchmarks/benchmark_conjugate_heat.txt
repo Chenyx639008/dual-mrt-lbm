@@ -1,0 +1,88 @@
+# ================================================================
+# BM-2: 共轭热传递基准（Phase 1 验证）
+# ----------------------------------------------------------------
+# 目标：含石英固体颗粒圆柱阵（无水合物），验证固-液界面
+#       温度梯度跳变是否满足共轭条件：λ_fluid * ∇T_f = λ_solid * ∇T_s
+#
+# 验证方法（Zhang 2019 §4.2 类比）：
+#   1) 运行至热场稳态
+#   2) 取穿过颗粒中心的水平剖面 T(x, y=NY/2)
+#   3) 在固-液界面两侧各取 3 格，拟合线性梯度
+#   4) 检验：dT_fluid/dx / dT_solid/dx ≈ λ_solid / λ_fluid = 0.9/0.6 = 1.5
+#
+# 几何：正方形排列的石英圆柱（morph=1, coat_thick=0, r_mid=0），
+#        半径 20 格，间距 20 格，纯石英（mat_id=1），无水合物涂层。
+# ================================================================
+
+# ---- 几何：规则石英圆柱阵 ----
+morph           1
+r_obs           20
+l_gap           20
+coat_thick      0           # 无水合物涂层
+r_mid           0           # 无孔填充水合物
+geom_file                   # 使用内置圆柱阵
+
+# ---- 流体 ----
+init_eq         1
+Sw              0.5
+water_seed      42
+
+# ---- 零驱动 ----
+Gx              0.0
+Gy              0.0
+drive_mode      1
+drive           1
+
+# ---- 密度/松弛 ----
+rhoA_ini_h      6.6293
+rhoA_ini_l      0.34127
+rhoB_ini_h      0.41931
+rhoB_ini_l      0.05
+tau_p_a         0.593418
+tau_p_b         0.515411
+GAB             0.24
+GBA             0.24
+sigmaA          0.08
+kappa           0.7698
+thetaA_quartz_deg   30
+thetaA_hydrate_deg  80
+
+# ---- 时间推进 ----
+eq_max_steps        5000
+eq_tol_rel          1e-4
+eq_need_consec      50
+flow_max_steps      80000       # 共轭热场收敛需更多步
+flow_tol_rel        1e-6
+flow_need_consec    300
+
+OUTPUT_EVERY        10000
+ENABLE_CKPT         0
+
+# ---- 水合物：仅热场，关闭反应 ----
+hydrate_enable        1
+hydrate_start_step    0
+T0_init               278.15
+T0_inlet              285.0
+
+# 关键：石英 λ=0.9, 流体 λ=0.6 → λ 比 1.5
+lambda_fluid          0.6
+lambda_hydrate        0.49
+lambda_solid          0.9      # 石英
+rhocp_fluid           4200000.0
+rhocp_hydrate         2100000.0
+rhocp_solid           2000000.0
+
+D_mol_water           1.85e-9
+Henry_KH              0.1
+Cm_init               0.0
+k0_rxn                0.0      # 无反应
+Ea_rxn                97500.0
+e1_peq                33.12
+e2_peq               -9005.5
+latent_heat           0.0
+
+Vm_hydrate            2.274e-5
+Vh_init               1.0
+vop_terminate_frac    0.0
+dx_phys               1.0e-5
+dt_phys               1.0e-6

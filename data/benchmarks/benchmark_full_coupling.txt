@@ -1,0 +1,98 @@
+# ================================================================
+# BM-5: 全耦合趋势基准（Phase 5 验证）
+# ----------------------------------------------------------------
+# 目标：仿 Yang 2024 / Zhang 2019 典型条件，验证五个定性趋势：
+#   (1) Vh 单调递减（水合物持续分解）
+#   (2) 水合物面附近 T 下降（吸热分解）
+#   (3) 水相中 Cm 梯度从水合物面向远场衰减
+#   (4) 节点翻转后流场无大速度冲击（re-init 效果）
+#   (5) 气-水界面处 Cm 趋向 Henry 平衡值
+#
+# 几何：coating 形态（morph=2）：石英固体核 + 水合物外壳
+#       模拟多孔介质中典型的水合物赋存形式
+#
+# 参数依据：
+#   Yang 2024 Table S1 量纲参数，10 μm 格子尺度
+#   T_init=277 K（低于分解温度），T_inlet=283 K（高于分解温度）
+#   → 温度梯度驱动从入口侧分解
+# ================================================================
+
+# ---- 几何：coating 形态 ----
+morph           2           # coating：固体核 + 水合物壳
+r_obs           18          # 石英固体核半径
+l_gap           16          # 颗粒中心间距
+coat_thick      5           # 水合物涂层厚度（格点）
+r_mid           0
+geom_file
+
+# ---- 流体 ----
+init_eq         1
+Sw              0.4         # 较低水饱和度（接近 Yang 2024 条件）
+water_seed      9876543
+
+# ---- 驱动（中等流速）----
+Gx              5e-9
+Gy              0.0
+drive_mode      1
+drive           1
+
+# ---- 密度/松弛 ----
+rhoA_ini_h      6.6293
+rhoA_ini_l      0.34127
+rhoB_ini_h      0.41931
+rhoB_ini_l      0.05
+tau_p_a         0.593418
+tau_p_b         0.515411
+GAB             0.24
+GBA             0.24
+sigmaA          0.08
+kappa           0.7698
+thetaA_quartz_deg   30
+thetaA_hydrate_deg  80
+
+# ---- 时间推进 ----
+eq_max_steps        20000       # 让两相先达到相分离基线
+eq_tol_rel          1e-4
+eq_need_consec      100
+flow_max_steps      200000      # 给水合物足够时间分解
+flow_tol_rel        1e-5
+flow_need_consec    300
+
+OUTPUT_EVERY        5000
+ENABLE_CKPT         1
+CP_EVERY            20000
+CP_KEEP             3
+
+# ---- 水合物：完整物理，标准地质参数 ----
+hydrate_enable        1
+hydrate_start_step    2000    # 先让流场稳定 2000 步再启动
+
+# 温度场：进口温差 ΔT=6 K，驱动界面移动
+T0_init               277.0   # 初始温度（低于 CH4 水合物分解温度）
+T0_inlet              283.0   # 入口边界（高于分解温度→驱动分解前缘移动）
+
+lambda_fluid          0.6
+lambda_hydrate        0.49
+lambda_solid          0.9
+rhocp_fluid           4200000.0
+rhocp_hydrate         2100000.0
+rhocp_solid           2000000.0
+
+# 浓度场
+D_mol_water           1.85e-9
+Henry_KH              0.1
+Cm_init               0.0
+
+# Kim-Bishnoi 动力学（Yang 2024 Table S1）
+k0_rxn                36000.0
+Ea_rxn                97500.0
+e1_peq                33.12
+e2_peq               -9005.5
+latent_heat           43000.0  # J/mol，吸热分解
+
+# VOP
+Vm_hydrate            2.274e-5
+Vh_init               1.0
+vop_terminate_frac    0.05     # 水合物剩余 < 5% 时停止
+dx_phys               1.0e-5
+dt_phys               1.0e-6

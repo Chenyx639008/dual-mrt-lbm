@@ -1,0 +1,96 @@
+# ================================================================
+# BM-4: VOP 质量守恒基准（Phase 3 验证）
+# ----------------------------------------------------------------
+# 目标：单个水合物圆柱，恒定小反应速率（k_r=const），
+#       验证：Σ Vh + Σ (Cm * Vm_latt) ≈ const（±0.5%/1000步）
+#
+# 验证步骤：
+#   1) 记录初始 Σ Vh_0 = 水合物节点数（每节点 Vh=1）
+#   2) 每 1000 步记录一次 Σ Vh 和 Σ Cm
+#   3) 计算 total_mass(t) = Σ Vh + Σ (Cm * Vm_latt / V_cell)
+#      V_cell = dx³（2D 取单位深度：dx²）
+#      Vm_latt = Vm_hydrate / dx^3 (已在 init_device_variable_hydrate 转换)
+#   4) | total_mass(t) - total_mass(0) | / total_mass(0) < 0.5%
+#
+#  辅助测量（输出文件）：
+#   - hydrate_Vh：体积分数场
+#   - concentration：溶解浓度场
+#   在 Python 后处理脚本中对 VTK 文件求和。
+#
+# 几何：pore-fill morph=1，单个大水合物圆（r_mid=50）
+# ================================================================
+
+# ---- 几何：单个水合物圆 ----
+morph           1
+r_obs           0
+l_gap           300
+coat_thick      0
+r_mid           50          # 水合物半径 50 格（300×300 域中心）
+geom_file
+
+# ---- 流体 ----
+init_eq         1
+Sw              0.6
+water_seed      42
+
+# ---- 驱动（弱驱动保证浓度平流有代表性）----
+Gx              1e-9
+Gy              0.0
+drive_mode      1
+drive           1
+
+# ---- 密度/松弛 ----
+rhoA_ini_h      6.6293
+rhoA_ini_l      0.34127
+rhoB_ini_h      0.41931
+rhoB_ini_l      0.05
+tau_p_a         0.593418
+tau_p_b         0.515411
+GAB             0.24
+GBA             0.24
+sigmaA          0.08
+kappa           0.7698
+thetaA_quartz_deg   30
+thetaA_hydrate_deg  80
+
+# ---- 时间推进 ----
+eq_max_steps        10000
+eq_tol_rel          1e-4
+eq_need_consec      100
+flow_max_steps      50000       # 观察 50 次 VOP 更新
+flow_tol_rel        1e-5
+flow_need_consec    200
+
+OUTPUT_EVERY        1000        # 每 1000 步输出一次，便于质量守恒跟踪
+ENABLE_CKPT         0
+
+# ---- 水合物：全开，小 k_r 保证质量守恒可验证 ----
+hydrate_enable        1
+hydrate_start_step    0
+T0_init               278.15
+T0_inlet              280.0    # 微小温差（驱动轻微热流）
+
+lambda_fluid          0.6
+lambda_hydrate        0.49
+lambda_solid          0.9
+rhocp_fluid           4200000.0
+rhocp_hydrate         2100000.0
+rhocp_solid           2000000.0
+
+D_mol_water           1.85e-9
+Henry_KH              0.1
+Cm_init               0.0
+
+# 小反应速率：VOP 缓慢分解，质量守恒更容易检验
+# k_r_latt = 0.01 * 1e-6 / 1e-5 = 1e-3（格子单位中浓度变化很小）
+k0_rxn                0.01
+Ea_rxn                0.0     # 等温近似，关闭 Arrhenius
+e1_peq                33.12
+e2_peq               -9005.5
+latent_heat           1000.0  # 小潜热（验证其不破坏守恒）
+
+Vm_hydrate            2.274e-5
+Vh_init               1.0
+vop_terminate_frac    0.5     # 分解至 50% 就停：验证守恒窗口足够长
+dx_phys               1.0e-5
+dt_phys               1.0e-6

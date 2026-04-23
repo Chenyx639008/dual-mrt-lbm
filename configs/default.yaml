@@ -1,0 +1,116 @@
+# configs/default.yaml
+# Master configuration for lbm_mrt CUDA solver.
+# Loaded by lbm_mrt.core.config.load_config() and flattened to params.txt format.
+# Key names in the flattened output match exact C++ load_params_txt() key strings.
+
+project:
+  name: lbm_mrt
+  notes: "default MRT-LBM two-phase porous flow config"
+
+# ── Geometry / Morphology ────────────────────────────────────────────────
+geometry:
+  morph: 1          # 1=pore-fill, 2=coating, 3=mixed, 0=from_file
+  r_obs: 20         # solid particle radius (lattice units)
+  l_gap: 20         # inter-particle gap (lattice units)
+  coat_thick: 6     # coating shell thickness (morph 2/3 only; set 0 otherwise)
+  r_mid: 4          # pore-fill hydrate inner radius (morph 1/3 only; set 0 otherwise)
+  geom_file: ""     # path to .plt Tecplot geometry file; empty = use morph-parametric geometry
+
+# ── Initial Fluids ───────────────────────────────────────────────────────
+fluids:
+  Sw: 0.3             # initial water saturation (threshold method)
+  water_seed: 1234567 # random seed for initial phase distribution
+
+  # Equilibrium densities (lattice units)
+  # Note: rhoA_ini_h/l are the params.txt keys; they map to rhoA_hi/lo in RuntimeParams
+  rhoA_ini_h: 6.6293
+  rhoA_ini_l: 0.34127
+  rhoB_ini_h: 0.1147
+  rhoB_ini_l: 0.0001
+
+  # Extreme Sw=0 / Sw=1 overrides
+  rhoA_ini_h_1: 7.2243   # used when Sw=1
+  rhoA_ini_l_0: 0.0      # used when Sw=0
+  rhoB_ini_l_1: 0.0      # used when Sw=1
+  rhoB_ini_h_0: 0.2363   # used when Sw=0
+
+# ── Wettability ──────────────────────────────────────────────────────────
+wettability:
+  thetaA_quartz_deg: 30    # A-phase contact angle on quartz (degrees)
+  thetaA_hydrate_deg: 80   # A-phase contact angle on hydrate (degrees)
+  GBw_quartz: 0.0          # B-phase wetting strength on quartz
+  GBw_hydrate: 0.0         # B-phase wetting strength on hydrate
+
+# ── Scenario Switches ────────────────────────────────────────────────────
+scenario:
+  init_eq: 1    # initial equilibrium preset (1 or 2); 0=manual density setup
+  drive: 2      # driving configuration selector
+
+# ── Driving Force ────────────────────────────────────────────────────────
+driving:
+  Gx: 1.5e-8    # body acceleration x-component (lattice units)
+  Gy: 0.0       # body acceleration y-component (lattice units)
+  drive_mode: 1 # 1=body force (Gx,Gy); 2=pressure/velocity boundary condition
+
+# ── Relaxation / Physics ─────────────────────────────────────────────────
+relaxation:
+  tau_p_a: 1.0    # MRT relaxation time for phase A (must be > 0.5; controls viscosity)
+  tau_p_b: 0.775  # MRT relaxation time for phase B
+  kappa: 0.6      # interface strength [0, 1]
+  GAB: 0.24       # A←B inter-phase interaction coefficient
+  GBA: 0.24       # B←A inter-phase interaction coefficient
+  sigmaA: 0.11    # A-phase surface tension parameter
+
+# ── Checkpoint / Restart ─────────────────────────────────────────────────
+checkpoint:
+  enable: true    # master on/off switch for checkpoint read/write
+  every: 50000    # save interval (time steps)
+  keep: 3         # number of recent checkpoints to retain per stage
+  resume: 1       # 1=attempt resume from latest checkpoint; 0=start fresh
+
+# ── Convergence Criteria ─────────────────────────────────────────────────
+convergence:
+  eq:
+    tol_rel: 1.0e-4    # relative flow-rate tolerance for equilibration stage
+    need_consec: 2     # consecutive hits required to declare convergence
+    max_steps: 200000  # hard cap on equilibration steps
+  flow:
+    tol_rel: 1.0e-4
+    need_consec: 3
+    max_steps: 5000000
+
+# ── Hydrate Dissociation (mcmp_sim_hydrate only) ─────────────────────────
+hydrate:
+  enable: false         # runtime switch (also requires -DHYDRATE_ENABLE at compile time)
+  start_step: 0         # first step where phase-change physics activates (0 = from start)
+
+  thermal:
+    T0_init: 278.15     # initial uniform temperature (K)
+    T0_inlet: 285.0     # inlet/top fixed temperature boundary (K)
+    lambda_fluid: 0.6       # water thermal conductivity W/(m·K)
+    lambda_hydrate: 0.49    # hydrate thermal conductivity W/(m·K)
+    lambda_solid: 0.9       # quartz thermal conductivity W/(m·K)
+    rhocp_fluid: 4200000.0    # water rho*cp J/(m3·K)
+    rhocp_hydrate: 2100000.0  # hydrate rho*cp J/(m3·K)
+    rhocp_solid: 2000000.0    # quartz rho*cp J/(m3·K)
+
+  concentration:
+    D_mol_water: 1.85e-9   # methane diffusivity in water (m2/s)
+    Henry_KH: 0.1          # dimensionless Henry constant (Cw = KH * Cg)
+    Cm_init: 0.0           # initial dissolved concentration (lattice units)
+
+  reaction:  # Kim-Bishnoi kinetics
+    k0_rxn: 36000.0      # pre-exponential factor mol/(m2·s·Pa)
+    Ea_rxn: 97500.0      # activation energy J/mol
+    e1_peq: 33.12        # equilibrium pressure empirical constant (pe = exp(e1 + e2/T))
+    e2_peq: -9005.5      # equilibrium pressure empirical constant (K)
+    latent_heat: 43000.0 # dissociation latent heat J/mol (endothermic, positive convention)
+
+  vop:  # Volume-Of-Pore solid-phase dynamic update
+    Vm_hydrate: 2.274e-5   # hydrate molar volume m3/mol
+    Vh_init: 1.0           # initial hydrate volume fraction [0,1]
+    vop_terminate_frac: 0.01  # stop simulation when remaining hydrate fraction drops below this
+
+  units:  # physical-to-lattice unit reference scales
+    dx_phys: 1.0e-5   # lattice cell physical size (m); default 10 um
+    dt_phys: 1.0e-6   # physical time step (s)

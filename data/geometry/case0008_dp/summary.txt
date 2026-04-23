@@ -1,0 +1,9 @@
+D_box = 1.9353
+beta = 4.2128
+patchiness = 0.0129
+skew = 1.2248
+kurtosis = 1.2745
+hurst = 0.9078
+tortuosity = 0.0158
+porosity = 0.4191
+euler_number = -52

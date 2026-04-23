@@ -1,0 +1,87 @@
+# ================================================================
+# BM-1: 纯热扩散基准（Phase 1 验证）
+# ----------------------------------------------------------------
+# 目标：空域（无障碍），零速度驱动，固定入口/出口温度边界。
+# 预期：稳态 T(y) 应为线性剖面，L2 误差 < 1e-4。
+#
+# 验证方法：
+#   1) 运行至稳态（flow_max_steps 步或者 eq_tol_rel 收敛）
+#   2) 读取 outputdata_flow*.vtk 中 temperature 场
+#   3) 对每列 x 取均值，与 T_lin(y) = T0_init + (T0_inlet - T0_init)*y/(NY-1) 比较
+#   解析解（1D 稳态导热，无源项、无对流）：
+#     T(y) = T0_inlet + (T0_init - T0_inlet) * (NY-1-y) / (NY-1)
+#   Y 方向：y=0 (ghost) = T_inlet = 285 K；y=NY-1 (ghost) 全展开（绝热）
+#   所以真实测量：在 y=1 到 y=NY-2 对 T 做线性拟合，残差 L2 < 1e-4 * ΔT
+# ================================================================
+
+# ---- 几何：空域（无颗粒圆柱）----
+morph           1
+r_obs           0           # 半径 0 = 无颗粒
+l_gap           300
+coat_thick      0
+r_mid           0
+geom_file                   # 空：使用内置空域（全部流体节点）
+
+# ---- 流体：最小化动力学影响（低密度差、低驱动）----
+init_eq         1
+Sw              0.5
+water_seed      42
+
+# ---- 驱动：零驱动保证 u≈0 ----
+Gx              0.0
+Gy              0.0
+drive_mode      1
+drive           1
+
+# ---- 密度/松弛（标准设置，尽量不影响热场）----
+rhoA_ini_h      6.6293
+rhoA_ini_l      0.34127
+rhoB_ini_h      0.41931
+rhoB_ini_l      0.05
+tau_p_a         0.593418
+tau_p_b         0.515411
+GAB             0.24
+GBA             0.24
+sigmaA          0.08
+kappa           0.7698
+
+# ---- 时间推进 ----
+eq_max_steps        5000        # 快速相分离（空域很快稳定）
+eq_tol_rel          1e-4
+eq_need_consec      50
+flow_max_steps      50000       # 热场扩散弛豫：~NX²/α_latt 步
+flow_tol_rel        1e-6
+flow_need_consec    200
+
+# ---- 输出 ----
+OUTPUT_EVERY        5000
+ENABLE_CKPT         0
+
+# ---- 水合物物理 ----
+hydrate_enable        1
+hydrate_start_step    0         # 从第 0 步就开启热场
+T0_init               278.15   # 初始温度 (K)
+T0_inlet              285.0    # y=0 入口固定温度 (K)
+
+# 纯导热：关闭浓度场与 VOP 的影响（k0_rxn=0 → 无反应，Vh 不变）
+lambda_fluid          0.6
+lambda_hydrate        0.49
+lambda_solid          0.9
+rhocp_fluid           4200000.0
+rhocp_hydrate         2100000.0
+rhocp_solid           2000000.0
+
+D_mol_water           1.85e-9
+Henry_KH              0.1
+Cm_init               0.0
+k0_rxn                0.0       # ← 零反应速率：冻结 VOP
+Ea_rxn                97500.0
+e1_peq                33.12
+e2_peq               -9005.5
+latent_heat           0.0       # ← 关闭潜热反馈：纯扩散测试
+
+Vm_hydrate            2.274e-5
+Vh_init               1.0
+vop_terminate_frac    0.0       # 不因 Vh 耗尽而终止
+dx_phys               1.0e-5
+dt_phys               1.0e-6
