@@ -6,13 +6,13 @@
 #include <iomanip>
 #include <vector>
 #include <algorithm>
-#include <cctype> 
-#include <sstream> 
+#include <cctype>
+#include <sstream>
 #include <map>
-#include <cstdio>  
+#include <cstdio>
 #include <chrono>
-#include <cstring>  
-#include <stdexcept> 
+#include <cstring>
+#include <stdexcept>
 #include <sys/stat.h>
 #include <sys/types.h>
 using namespace std;
@@ -37,7 +37,7 @@ void set_drive_scale(double s){
   CK(cudaMemcpyToSymbol(d_drive_scale, &s, sizeof(double)));
 }
 
-/* ============ 读参工具：解析 key value 文本为 map ============ 
+/* ============ 读参工具：解析 key value 文本为 map ============
 static map<string,double> parse_kv(const string& path){
   ifstream in(path);
   map<string,double> m; string k; double v;
@@ -382,7 +382,7 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
     get("dx_phys",                r.dx_phys);
     get("dt_phys",                r.dt_phys);
 #endif
-    // ============ 应用 init_eq 预设（在所有普通键读完之后执行） ============ 
+    // ============ 应用 init_eq 预设（在所有普通键读完之后执行） ============
     // 约定：init_eq 为 1 或 2 时，以下组合将覆盖相关字段；
     //double rhoA_hi = 6.6293, rhoA_lo = 0.34127;
     //double rhoB_hi = 0.3823,  rhoB_lo = 0.0001;
@@ -396,9 +396,9 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
         r.sigmaA = 0.08;
         r.kappa  = 0.7698;
         r.GAw_m = 1.0 / 399.39;
-        r.GAw_c = 85.29;   
+        r.GAw_c = 85.29;
         r.rhoA_ini_h_1 = 7.5511;   r.rhoA_ini_l_0 = 0.0;
-        r.rhoB_ini_l_1 = 0.0;      r.rhoB_ini_h_0 = 0.4290; 
+        r.rhoB_ini_l_1 = 0.0;      r.rhoB_ini_h_0 = 0.4290;
     } else if (r.init_eq == 2) {
         r.rhoA_hi = 6.6293;  r.rhoA_lo = 0.005;
         r.rhoB_hi = 0.236653; r.rhoB_lo = 0.014;
@@ -586,7 +586,7 @@ void push_device_constants(const RuntimeParams& p){
     CK(cudaMemcpyToSymbol(d_tau_p_b, &p.tau_p_b, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_kappa,   &p.kappa,   sizeof(double)));
 
-    
+
     CK(cudaMemcpyToSymbol(d_GAB,   &p.GAB,    sizeof(double)));
     CK(cudaMemcpyToSymbol(d_GBA,   &p.GBA,    sizeof(double)));
     CK(cudaMemcpyToSymbol(d_sigmaA,&p.sigmaA,sizeof(double)));
@@ -607,7 +607,7 @@ void build_and_upload_geometry(const RuntimeParams& p, Porous_host& porous){
     build_circle_array(porous, p.morph, p.r_obs, p.coat_thick, p.r_mid, p.l_gap);
     // 上传：写入 pointsflag/材质图/润湿映射到 GPU，全域几何就绪
     upload_obstacles(porous);
-    
+
 }
 void build_and_upload_geometry_from_tecplot(const RuntimeParams& P,
                                             Mix_dev& M_dev)
@@ -702,7 +702,7 @@ RunResult run_stage(Fluid_dev& A, Fluid_host& AH,
     auto t1 = std::chrono::high_resolution_clock::now();
     int start = (resumed_step >= 0) ? (resumed_step + 1) : 0;
 
-    SM.limiter_window     = SM.interval; 
+    SM.limiter_window     = SM.interval;
     SM.limiter_log_every  = SM.limiter_window; // 写文件频率 == 窗口
     SM.limiter_stdout     = false;             // 不在控制台打印
     SM.limiter_log_on_hit = false;             // 不因“命中阈值”即时写
@@ -758,6 +758,7 @@ static void copy_hydrate_to_host(const Therm_dev& TH,
     CK(cudaMemcpy(HH.Cm.data(),        CN.Cm,        n*sizeof(double), cudaMemcpyDeviceToHost));
     CK(cudaMemcpy(HH.Vh.data(),        VP.Vh,        n*sizeof(double), cudaMemcpyDeviceToHost));
     CK(cudaMemcpy(HH.diss_rate.data(), VP.diss_rate, n*sizeof(double), cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(HH.pore_origin.data(), VP.pore_origin, n*sizeof(double), cudaMemcpyDeviceToHost));
 }
 
 // 水合物诊断：计算 hydrate_volume_frac 和 Q_dissociation
@@ -848,7 +849,7 @@ RunResult run_stage_hydrate(Fluid_dev& A, Fluid_host& AH,
             outputvtk(step, P.file_dir, prefix.c_str(), title.c_str(), AH, BH, MH);
             if (P.hydrate_enable) {
                 copy_hydrate_to_host(TH, CN, VP, HH);
-                outputvtk_append_hydrate(vtk_path, HH.T, HH.Cm, HH.Vh, HH.diss_rate);
+                outputvtk_append_hydrate(vtk_path, HH.T, HH.Cm, HH.Vh, HH.diss_rate, HH.pore_origin);
                 update_hydrate_diagnostics(VP, Vh_init_total, R);
             }
             break;
@@ -866,7 +867,7 @@ RunResult run_stage_hydrate(Fluid_dev& A, Fluid_host& AH,
             outputvtk(step, P.file_dir, prefix.c_str(), title.c_str(), AH, BH, MH);
             if (P.hydrate_enable) {
                 copy_hydrate_to_host(TH, CN, VP, HH);
-                outputvtk_append_hydrate(vtk_path, HH.T, HH.Cm, HH.Vh, HH.diss_rate);
+                  outputvtk_append_hydrate(vtk_path, HH.T, HH.Cm, HH.Vh, HH.diss_rate, HH.pore_origin);
                 update_hydrate_diagnostics(VP, Vh_init_total, R);
                 printf("[hydrate step=%d] Vh_frac=%.4f  Q_diss=%.4e  n_conv_total=%d\n",
                        step, R.hydrate_volume_frac, R.Q_dissociation, R.n_converted_total);
@@ -928,7 +929,7 @@ RunResult run_equilibrate_then_flow(Fluid_dev& A, Fluid_host& AH,
         eq.tag               = "eq";
 
         // --- 用总阀门控制局部水锁 ---
-        
+
         RunResult R_eq = run_stage(A, AH, B, BH, M, MH, SM, eq, P);
         // 记录阶段1关键信息（精简版）
         R.eq_steady      = R_eq.steady;
@@ -942,7 +943,7 @@ RunResult run_equilibrate_then_flow(Fluid_dev& A, Fluid_host& AH,
                 R.eq_ckpt_step = ck;
                 std::printf("[ckpt] saved eq baseline at step %d\n", ck);
             } else {
-                R.eq_ckpt_step = -1; 
+                R.eq_ckpt_step = -1;
             }
         }
     }
@@ -970,7 +971,7 @@ RunResult run_equilibrate_then_flow(Fluid_dev& A, Fluid_host& AH,
     R.QB              = R_flow.QB;
     R.Qmix            = R_flow.Qmix;
 
-    
+
     // 写摘要（只写核心几项）
     write_run_summary(R, SM.interval, P);
 

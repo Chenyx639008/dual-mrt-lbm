@@ -151,13 +151,15 @@ void alloc_vop(VOP_dev& VP)
     CUDA_CHECK(cudaMalloc(&VP.diss_rate,       mem_size_scalar));
     CUDA_CHECK(cudaMalloc(&VP.S_latent,        mem_size_scalar));
     CUDA_CHECK(cudaMalloc(&VP.new_fluid_flag,  mem_size_flag));
+    CUDA_CHECK(cudaMalloc(&VP.pore_origin,     mem_size_scalar));
 }
 void free_vop(VOP_dev& VP)
 {
     cudaFree(VP.Vh);  cudaFree(VP.diss_rate);
-    cudaFree(VP.S_latent);  cudaFree(VP.new_fluid_flag);
+    cudaFree(VP.S_latent);  cudaFree(VP.new_fluid_flag);  cudaFree(VP.pore_origin);
     VP.Vh = VP.diss_rate = VP.S_latent = nullptr;
     VP.new_fluid_flag = nullptr;
+    VP.pore_origin = nullptr;
 }
 
 // ============================================================
@@ -776,13 +778,31 @@ void step_conc(Conc_dev& CN, const Therm_dev& TH,
 // ============================================================
 // §12  VOP（Phase 3 桩）
 // ============================================================
-void init_vop(VOP_dev& VP, const int* pointsflag)
+__global__ static void kernel_init_vh_field(double* __restrict__ Vh,
+                                             const int* __restrict__ pointsflag,
+                                             double vh_init)
 {
-    // Phase 3 实现：水合物节点 Vh=1，其他=0
-    CUDA_CHECK(cudaMemset(VP.Vh,           0, mem_size_scalar));
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+
+    const size_t s = idx_scalar(x, y);
+    const int fl = pointsflag[s];
+    const bool is_hydrate = (fl == -3) || (fl == -1 && d_wall_mat[s] == 2);
+    Vh[s] = is_hydrate ? vh_init : 0.0;
+}
+
+void init_vop(VOP_dev& VP, const int* pointsflag, double Vh_init)
+{
+    // 水合物区域（内部-3 + 水合物ghost -1&mat=2）初始化为 Vh_init，其他为0。
+    kernel_init_vh_field<<<grid, threads>>>(VP.Vh, pointsflag, Vh_init);
+    CUDA_CHECK(cudaGetLastError());
+
     CUDA_CHECK(cudaMemset(VP.diss_rate,    0, mem_size_scalar));
     CUDA_CHECK(cudaMemset(VP.S_latent,     0, mem_size_scalar));
     CUDA_CHECK(cudaMemset(VP.new_fluid_flag,0,mem_size_flag));
+    CUDA_CHECK(cudaMemset(VP.pore_origin,  0, mem_size_scalar));
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 // step_vop 实现在 hydrate_vop.cu（Phase 3）

@@ -99,6 +99,7 @@ struct VOP_dev {
     double* diss_rate     = nullptr;   // 每节点分解速率        [NX*NY]
     double* S_latent      = nullptr;   // 潜热源项（暂存）      [NX*NY]
     int*    new_fluid_flag = nullptr;  // 本步翻转节点标记      [NX*NY]
+    double* pore_origin   = nullptr;   // 诊断场：1=由水合物分解释放的孔隙，0=原生孔隙 [NX*NY]
 };
 
 // ============================================================
@@ -208,7 +209,7 @@ void step_conc(Conc_dev& CN, const Therm_dev& TH,
 // ============================================================
 // §9  VOP 固相更新（Phase 3）函数声明
 // ============================================================
-void init_vop(VOP_dev& VP, const int* pointsflag);
+void init_vop(VOP_dev& VP, const int* pointsflag, double Vh_init);
 
 // 更新 Vh，检测翻转事件，返回本步翻转节点数
 int step_vop(VOP_dev& VP,

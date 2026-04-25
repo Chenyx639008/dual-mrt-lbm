@@ -186,7 +186,7 @@ struct RunResult {
 
   bool flow_resumed=false;     // flow 阶段是否从断点恢复
   int  flow_resume_step=-1;    // 恢复自哪一步（若有）
-  
+
   // 供内部传递用（不在摘要里输出也行）
   bool resumed=false;          // run_stage 内部：本阶段是否恢复
   int  resumed_step=-1;        // run_stage 内部：恢复步
@@ -218,9 +218,10 @@ struct HydrateHost {
     std::vector<double> Cm;         // 溶解浓度 [NX*NY]
     std::vector<double> Vh;         // 水合物体积分数 [NX*NY]
     std::vector<double> diss_rate;  // 分解速率 [NX*NY]
+    std::vector<double> pore_origin;// 诊断：1=分解释放孔隙，0=原生孔隙 [NX*NY]
     HydrateHost()
     : T(NX*NY, 0.0), Cm(NX*NY, 0.0),
-      Vh(NX*NY, 0.0), diss_rate(NX*NY, 0.0) {}
+      Vh(NX*NY, 0.0), diss_rate(NX*NY, 0.0), pore_origin(NX*NY, 0.0) {}
 };
 
 // 水合物扩展版 run_stage（含耦合物理循环）
@@ -239,7 +240,7 @@ RunResult run_equilibrate_then_flow(Fluid_dev& A, Fluid_host& AH,
                                     Mix_dev&   M, Mix_host&   MH,
                                     SteadyMonitor& SM,
                                     const RuntimeParams& P);
-              
+
 
 /* --------- 摘要输出 --------- */
 void write_run_summary(const RunResult& R, int interval, const RuntimeParams& P);

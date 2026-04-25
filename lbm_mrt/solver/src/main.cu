@@ -1,7 +1,7 @@
 // main.cu 文件是程序的入口点，负责初始化、执行和清理工作
 //9.1坂本拟加入，断点处理
 
-#include <iomanip> 
+#include <iomanip>
 #include <string>
 #include <cstdlib>
 #include <vector>
@@ -10,7 +10,7 @@
 #include <fstream>
 #include <sstream>
 #include <chrono>
-#include <map>  
+#include <map>
 #include "../include/unified_cuda_error_check.cuh"
 #include "../include/LBM.h"
 #include "../include/steady_monitor.cuh"
@@ -47,7 +47,7 @@ int main(int argc, char** argv){
     Fluid_dev A_dev,B_dev; Mix_dev M_dev;
     Fluid_host AH,BH; Mix_host MH;
     allocate_all(A_dev,B_dev,M_dev);
-    _nan_chk_probe_dev = A_dev.rho; 
+    _nan_chk_probe_dev = A_dev.rho;
 
 
     // 3) 一次性下发：润湿查表与墙面图、__constant__ 常量、几何/材质图
@@ -56,7 +56,7 @@ int main(int argc, char** argv){
     init_run_dirs_from_env();
     push_device_constants(P);      //  本次 run 的动态常量（驱动、ρ_init、τ、κ 等）到 __constant__
 
-    Porous_host porous;            
+    Porous_host porous;
     build_and_upload_geometry_from_tecplot(P, M_dev);  // 新的：直接从 tecplot
     init_geometry(M_dev.pointsflag);    // 保留：根据 flag 分类 ghost/流体/固体
     init_all(M_dev, A_dev, B_dev);      // A/B 两相与混合场初始化（ρ/ψ/fin 等）
@@ -71,7 +71,7 @@ int main(int argc, char** argv){
     SM.limiter_log_thr   = 1e-3;            // 触发阈值（按需改）
     SM.limiter_stdout    = false;           // 禁止控制台打印
     SM.limiter_log_path  = P.file_dir + "/limiter_log.csv";
-    
+
 #ifdef HYDRATE_ENABLE
     // 5-H) 水合物模式初始化（仅 hydrate_enable 时有意义；alloc 始终执行以保持统一生命周期）
     Therm_dev TH_dev;  Conc_dev CN_dev;  VOP_dev VP_dev;
@@ -83,7 +83,7 @@ int main(int argc, char** argv){
         alloc_vop(VP_dev);
         init_thermal_field(TH_dev, M_dev.pointsflag);
         init_conc_field(CN_dev, M_dev.pointsflag);
-        init_vop(VP_dev, M_dev.pointsflag);
+        init_vop(VP_dev, M_dev.pointsflag, P.Vh_init);
         printf("[hydrate] 水合物场初始化完成。\n");
     }
 #endif

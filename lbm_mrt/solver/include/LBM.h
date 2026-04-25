@@ -345,5 +345,6 @@ void outputvtk_append_hydrate(const std::string& vtk_path,
                                const std::vector<double>& T,
                                const std::vector<double>& Cm,
                                const std::vector<double>& Vh,
-                               const std::vector<double>& diss_rate);
+                               const std::vector<double>& diss_rate,
+                               const std::vector<double>& pore_origin);
 #endif

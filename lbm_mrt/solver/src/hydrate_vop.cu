@@ -40,7 +40,10 @@ __device__ __forceinline__ double feq_vop(int k, double rho, const double u[2])
 // ------------------------------------------------------------
 // Vh[idx] -= d_Vm_latt * diss_rate[idx]
 //   diss_rate 由 kernel_boundary_conc_reaction 写入（格子单位）
-// Vh <= 0 时标记翻转；只处理 flag == -3 的水合物内部节点
+// Vh <= 0 时标记翻转；更新对象为“水合物材质节点”
+//   - 水合物内部: flag == -3
+//   - 水合物界面ghost: flag == -1 且 d_wall_mat == 2
+// 这样分解会从边界先开始，再逐步向内部推进。
 // ============================================================
 __global__ void kernel_update_vop(
           double* __restrict__ Vh,
@@ -53,7 +56,9 @@ __global__ void kernel_update_vop(
     if (x >= NX || y >= NY) return;
 
     const size_t s  = (size_t)NX * y + x;
-    if (pointsflag[s] != -3) return;
+    const int fl = pointsflag[s];
+    const bool is_hydrate = (fl == -3) || (fl == -1 && d_wall_mat[s] == 2);
+    if (!is_hydrate) return;
 
     double v = Vh[s] - d_Vm_latt * diss_rate[s];
     if (v <= 0.0) {
@@ -68,10 +73,12 @@ __global__ void kernel_update_vop(
 // § VOP-2  应用节点翻转：-3 → 1，清除 d_wall_mat
 // ------------------------------------------------------------
 // atomicAdd 统计翻转数写入 n_conv[0]
+// pore_origin[s] = 1 表示该流体孔隙来源于水合物分解
 // ============================================================
 __global__ void kernel_apply_vop_conversion(
           int*    __restrict__ pointsflag,
     const int*    __restrict__ new_fluid_flag,
+        double* __restrict__ pore_origin,
           int*    __restrict__ n_conv)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -83,6 +90,7 @@ __global__ void kernel_apply_vop_conversion(
 
     pointsflag[s] = 1;
     d_wall_mat[s] = 0;
+    pore_origin[s] = 1.0;
     atomicAdd(n_conv, 1);
 }
 
@@ -93,6 +101,8 @@ __global__ void kernel_apply_vop_conversion(
 // fin/fout    = feq(rho_mean, u=0)
 // h_in[k]     = w5[k] * T_mean
 // g_in[k]     = w5[k] * Cm_mean
+// 说明：当前实现中“新流体”由邻域插值重构得到，
+// 尚未显式按化学计量把分解产物（水+气）分相守恒写入。
 // ============================================================
 __global__ void kernel_reinit_new_fluid(
     const int*    __restrict__ new_fluid_flag,
@@ -192,7 +202,7 @@ int step_vop(VOP_dev& VP,
     CUDA_CHECK(cudaMemset(d_n_conv, 0, sizeof(int)));
 
     kernel_apply_vop_conversion<<<grid, threads>>>(
-        MX.pointsflag, VP.new_fluid_flag, d_n_conv);
+        MX.pointsflag, VP.new_fluid_flag, VP.pore_origin, d_n_conv);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 

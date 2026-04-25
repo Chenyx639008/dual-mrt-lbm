@@ -1,0 +1,27 @@
+{
+    "version": 4,
+    "configurations": [
+        {
+            "name": "Linux",
+            "compilerPath": "/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/compilers/bin/nvcc",
+            "intelliSenseMode": "linux-gcc-x64",
+            "cppStandard": "c++17",
+            "defines": [
+                "HYDRATE_ENABLE"
+            ],
+            "includePath": [
+                "${workspaceFolder}/lbm_mrt/solver/include",
+                "${workspaceFolder}/lbm_mrt/solver/src",
+                "/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/include",
+                "/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/compilers/include",
+                "/usr/include"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/lbm_mrt/solver/include",
+                    "${workspaceFolder}/lbm_mrt/solver/src"
+                ]
+            }
+        }
+    ]
+}

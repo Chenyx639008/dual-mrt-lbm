@@ -2,7 +2,7 @@
 #define LBM_DEFINE_GLOBALS
 #include "../include/LBM.h"
 #include <cmath>
-#include <string>                
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -158,7 +158,7 @@ double h_GAw_m = 1.0 / 456.69;
 double h_GAw_c = 86.41;
 // θA -> GAw 的标定（照你原公式）
 static inline double G_from_theta_A(double theta_deg){
-    return h_GAw_m * (theta_deg - h_GAw_c); 
+    return h_GAw_m * (theta_deg - h_GAw_c);
 }
 
 // —— 主动上传两种材料（1=石英, 2=水合物）；其余材料默认 0 —— //
@@ -335,7 +335,7 @@ void upload_obstacles(const Porous_host& h)
     cudaMemcpyToSymbol(obst_num_gpu, &n, sizeof(int)); // ✅ 这句非常重要
 }
 
-/* 若需要清空（可选） 
+/* 若需要清空（可选）
 void clear_obstacles(){
     int zero = 0;
     cudaMemcpyToSymbol(obst_num,&zero,sizeof(int));
@@ -476,13 +476,13 @@ __global__ void compute_S_gpu_B(const double* ux_host, const double* uy_host,
     const double* psi_B,double* S_B , int* pointsflag);
 __global__ void compute_C_gpu_A(const double* psi_A, double* C_A,int* pointsflag) ;
 __global__ void mrt_collide_two_components_gpu(
-        const double* rho_A, 
+        const double* rho_A,
         const double* S_A,  const double* C_A,
         const double* fin_A,      double* fout_A,  double* min_A,      double* mout_A,
 
-        const double* rho_B, 
+        const double* rho_B,
         const double* S_B,   const double* C_B,   // C_B 目前没用，可保留
-        const double* fin_B,      double* fout_B,  double* min_B,      double* mout_B,  
+        const double* fin_B,      double* fout_B,  double* min_B,      double* mout_B,
 		const double* ux_host, const double* uy_host,   int* pointsflag );
 __global__ void stream_two_components_gpu(double* fin_A, const double* fout_A, double* fin_B, const double* fout_B ,int* pointsflag);
 __global__ void boundary_gpu(double*  fin_A,const double* fout_A,double*  fin_B,const double*  fout_B, const int* pointsflag);
@@ -522,12 +522,12 @@ __global__ void mark_fluid_solid(int* pointsflag)
         const double dist2 = double(dx*dx + dy*dy);
 
         if (dist2 <= ob.r2) {
-            // —— 固体内核 —— 
+            // —— 固体内核 ——
             flag = -2;     // 固体
             mat  = 1;      // 固体材料
             break;
         } else if (dist2 <= ob.r2_hydrate) {
-            // —— 水合物壳 或 纯水合物圆 —— 
+            // —— 水合物壳 或 纯水合物圆 ——
             flag = -3;     // 水合物
             mat  = 2;      // 水合物材料（※ 不再沿用 ob.mat_id）
             break;
@@ -536,8 +536,8 @@ __global__ void mark_fluid_solid(int* pointsflag)
 
     // 边界/ghost 的覆写仅对流体格生效
     if (flag > 0) {
-        if (y == 0 || y == NY-1)      flag = -1; // 
-        else if (y == 1 || y == NY-2) flag =  0; // 
+        if (y == 0 || y == NY-1)      flag = -1; //
+        else if (y == 1 || y == NY-2) flag =  0; //
     }
 
     pointsflag[idx] = flag;
@@ -631,7 +631,7 @@ __global__ void mark_ghost(int* pointsflag)
 
 //用于在主函数中启动 GPU 上的初始化核函数
 __host__ void init_all(int* pointsflag, double* rho_A, double* fin_A, double* fout_A, double*min_A ,double*mout_A,
-						double* rho_B,double* fin_B, double* fout_B, double* min_B ,double*mout_B) 
+						double* rho_B,double* fin_B, double* fout_B, double* min_B ,double*mout_B)
 {
 	init_gpu<<<grid, threads>>>(pointsflag, rho_A, fin_A, fout_A, min_A, mout_A, rho_B,fin_B, fout_B, min_B, mout_B);
 	CUDA_CHECK(cudaGetLastError());        // 立即检查 launch 配置错误
@@ -702,12 +702,12 @@ __host__ void init_device_variable() {
 // 所有步骤在 GPU 上并行进行，整合在 evolution(...) 中，便于在 main() 中统一调用。
 __host__ void evolution_all(
     double* rho_A, double* ux_A, double* uy_A,
-    double* psi_A, double* pressure_A, 
+    double* psi_A, double* pressure_A,
     double* Fx_mol_A, double* Fy_mol_A, double* Fx_ads_A, double* Fy_ads_A,
     double* fin_A, double* fout_A, double* min_A, double* mout_A, double* S_A, double* C_A,
 
-    double* rho_B, double* ux_B, double* uy_B, 
-    double* psi_B, double* pressure_B, 
+    double* rho_B, double* ux_B, double* uy_B,
+    double* psi_B, double* pressure_B,
     double* Fx_mol_B, double* Fy_mol_B, double* Fx_ads_B, double* Fy_ads_B,
     double* fin_B, double* fout_B, double* min_B, double* mout_B, double* S_B, double* C_B,
 
@@ -966,7 +966,7 @@ __global__ void compute_rho_fluid_A(
 
     /* —— 全局坐标 —— */
     int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;   
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= NX || y >= NY) return;
 
     int idx = findindex_scalar_gpu(x, y);
@@ -1044,7 +1044,7 @@ __global__ void compute_p_psi_A_all(
         double h_minRho, double h_maxRho)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;                
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= NX || y >= NY) return;
     int idx = findindex_scalar_gpu(x, y);
     // —— 1) ghost layer —— 用密度直接做 psi，跳过下面的 EOS
@@ -1054,7 +1054,7 @@ __global__ void compute_p_psi_A_all(
     double rho_safe = fmax(rho_A[idx], 1e-5);
     double tmp1 = 0.0, tmp2 = 0.0;
     double alpha_gpu = 0.0;
-    
+
     alpha_gpu = pow(1.0 + (0.37464 + 1.54226 * omega_w_gpu - 0.26992 * omega_w_gpu * omega_w_gpu) * (1.0 - sqrt(reducedT_w_ini_gpu)), 2.0);
     double denom1 = fmax(1.0 - b_w_gpu * rho_safe, 1e-4);
 	double denom2 = fmax(1.0 + 2.0 * b_w_gpu * rho_safe - b_w_gpu * b_w_gpu * rho_safe * rho_safe, 1e-4);
@@ -1276,7 +1276,7 @@ __global__ void compute_molecular_force_gpu(
 
         double psiA_nb = psi_A[idxp];
         double psiB_nb = psi_B[idxp];
-        double phiA_nb_new = rho_A[idxp];   
+        double phiA_nb_new = rho_A[idxp];
         double phiB_nb_new = rho_B[idxp];
         tmpAA[0] += ex * psiA_nb;  tmpAA[1] += ey * psiA_nb;
         tmpAB[0] += ex * phiB_nb_new;  tmpAB[1] += ey * phiB_nb_new;
@@ -1325,7 +1325,7 @@ __global__ void compute_adsorption_force_gpu(
 
             wAx += ex * psiA * GAw_loc;  wAy += ey * psiA * GAw_loc;
             wBx += ex * psiB * GBw_loc;  wBy += ey * psiB * GBw_loc; // ← 用 GBw_loc
-        } 
+        }
 
     }
     Fx_ads_A[idx] = -wAx;  Fy_ads_A[idx] = -wAy;
@@ -1343,7 +1343,7 @@ __global__ void compute_velocity_gpu_AB(
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
 	if (x >= NX || y >= NY) return;
 	int idx = findindex_scalar_gpu(x, y);
-	if (pointsflag[idx] >= 0) {	
+	if (pointsflag[idx] >= 0) {
 		// --- A 组分 ---
 		ux_A[idx] = 0.0;
 		uy_A[idx] = 0.0;
@@ -1412,7 +1412,7 @@ __global__ void compute_velocity_gpu_mix(
 }
 
 //张量扰动核函数
-__global__ void compute_C_gpu_A(const double* psi_A, double* C_A,  int* pointsflag) 
+__global__ void compute_C_gpu_A(const double* psi_A, double* C_A,  int* pointsflag)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -1456,7 +1456,7 @@ __global__ void compute_C_gpu_A(const double* psi_A, double* C_A,  int* pointsfl
 //Guo 力模型下的外力源项,A组分
 __global__ void compute_S_gpu_A(const double* ux_host, const double* uy_host,
     const double* rho_A, const double* Fx_mol_A, const double* Fy_mol_A,const double* Fx_ads_A, const double* Fy_ads_A,
-    const double* psi_A, double* S_A, int* pointsflag) 
+    const double* psi_A, double* S_A, int* pointsflag)
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -1584,13 +1584,13 @@ void positivity_limiter_B(double* __restrict__ fout,
 
 /* ---------- ① 仅碰撞，不做迁移 ---------- */
 __global__ void mrt_collide_two_components_gpu(
-        const double* rho_A, 
+        const double* rho_A,
         const double* S_A,  const double* C_A,
         const double* fin_A,      double* fout_A,  double* min_A,      double* mout_A,
 
-        const double* rho_B, 
+        const double* rho_B,
         const double* S_B,   const double* C_B,   // C_B 目前没用，可保留
-        const double* fin_B,      double* fout_B,  double* min_B,      double* mout_B,  
+        const double* fin_B,      double* fout_B,  double* min_B,      double* mout_B,
 		const double* ux_host, const double* uy_host,   int* pointsflag )
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1655,7 +1655,7 @@ __global__ void mrt_collide_two_components_gpu(
 				min_B[ findindex_distfun_gpu(x,y,k) ] = mk;
 			}
 
-			#pragma unroll			
+			#pragma unroll
 			for (int k=0;k<Q;++k){
 				int idxk = findindex_distfun_gpu(x,y,k);
 				double mk    = min_B[idxk];
@@ -1978,11 +1978,11 @@ __host__ void outputvtk(int                     step,
             vtk.write(reinterpret_cast<char*>(&t), sizeof(double));
         }
     };
-    /* ---------- 6 个标量字段：与 .dat 顺序一致 ----------*/ 
+    /* ---------- 6 个标量字段：与 .dat 顺序一致 ----------*/
     write_scalar("rho",      MIX.rho);      // 混合密度
     write_scalar("rhoA",     AH.rho);       // ρ_A
-    write_scalar("ux_A",     AH.ux);       // 
-    write_scalar("uy_A",     AH.uy);       // 
+    write_scalar("ux_A",     AH.ux);       //
+    write_scalar("uy_A",     AH.uy);       //
     write_scalar("Fx_mol",   AH.Fx_mol);       // ρ_B
     write_scalar("Fy_mol",   AH.Fy_mol);       // ρ_B
     write_scalar("Fx_ads",   AH.Fx_ads);       // ρ_B
@@ -1993,7 +1993,7 @@ __host__ void outputvtk(int                     step,
     write_scalar("pressure", MIX.pressure); // 压力
     write_scalar("U",        MIX.ux);       // U 分量
     write_scalar("V",        MIX.uy);       // V 分量
-	
+
     /* ---------- flag：存成 int，头部也写 int ---------- */
     vtk << "\nSCALARS flag int\nLOOKUP_TABLE default\n";
 	for (int f : MIX.pointsflag) {
@@ -2013,7 +2013,8 @@ __host__ void outputvtk_append_hydrate(const std::string& vtk_path,
                                         const std::vector<double>& T,
                                         const std::vector<double>& Cm,
                                         const std::vector<double>& Vh,
-                                        const std::vector<double>& diss_rate)
+                                        const std::vector<double>& diss_rate,
+                                        const std::vector<double>& pore_origin)
 {
     std::ofstream vtk(vtk_path, std::ios::binary | std::ios::app);
     if (!vtk) return;
@@ -2027,6 +2028,7 @@ __host__ void outputvtk_append_hydrate(const std::string& vtk_path,
     write_scalar("concentration", Cm);
     write_scalar("hydrate_Vh",   Vh);
     write_scalar("diss_rate",    diss_rate);
+    write_scalar("pore_origin",  pore_origin);
 }
 #endif  // HYDRATE_ENABLE
 
