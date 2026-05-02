@@ -12,8 +12,8 @@
 
 /* ------------ ① 网格尺寸与时间控制 ------------------- */
 constexpr unsigned int SCALE   = 1;
-constexpr unsigned int NX      = 300* SCALE;//360
-constexpr unsigned int NY      = 300* SCALE;//240
+constexpr unsigned int NX      = 339* SCALE;
+constexpr unsigned int NY      = 212* SCALE;
 constexpr unsigned int NSTEPS  = 5000000;
 constexpr unsigned int NOUTPUT = 50000;
 /* ------------ ② D2Q9 几何与权重 ----------------------- */

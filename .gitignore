@@ -77,6 +77,13 @@ target/
 # results
 results/
 
+# reference PDFs (large, copyright)
+references/
+
+# compiled CUDA binaries
+lbm_mrt/solver/mcmp_sim
+lbm_mrt/solver/mcmp_sim_hydrate
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

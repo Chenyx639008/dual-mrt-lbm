@@ -1,5 +1,8 @@
 # configs/hydrate.yaml
-# Hydrate-enabled overlay configuration for lbm_mrt.
+# 通用水合物参数基线（保守值，主要供 test_hydrate_validation.py 使用）
+# 实际验证案例请使用专用配置：
+#   hydrate_sphere_hot.yaml  — 球形单体案例，底边强升温（T_inlet=323.15 K, bc_side=0）
+#   hydrate_porous.yaml      — 多孔介质案例，右边界升温（T_inlet=298.15 K, bc_side=3）
 # Use with the mcmp_sim_hydrate binary.
 # Load alongside default.yaml: load_config("configs/hydrate.yaml")
 # This file only overrides the hydrate section; all other params come from default.yaml.

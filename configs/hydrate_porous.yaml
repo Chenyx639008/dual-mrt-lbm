@@ -1,0 +1,48 @@
+# configs/hydrate_porous.yaml
+# 多孔介质水合物分解验证案例
+# 几何：339×212，build_circle_array 生成的颗粒堆积多孔介质
+#   morph=2（coating 膜型）或 morph=1（孔隙填充型）由运行脚本选择
+# 热驱动：右边界（x=NX-1 侧）升温，水合物从右侧开始分解
+#
+# 与 hydrate_sphere_hot.yaml 的区别：
+#   - 网格 339×212（非正方形，与 LBM.h constexpr 注释中的 round trip 案例一致）
+#   - 热边界在 x 方向（右侧），而非 y=0 底边
+#   - 初始温度处于水合物稳定区，右侧升温后从右侧开始分解
+#   - T0_inlet 设为 298.15 K（约 25°C），足够触发标准压力下的分解驱动力
+
+hydrate:
+  enable: true
+  start_step: 0
+
+  thermal:
+    T0_init: 274.15        # 初始均匀温度（1°C，水合物稳定）
+    T0_inlet: 298.15       # 右侧边界加热至 25°C，触发分解前沿从右向左推进
+    thermal_bc_side: 3     # 3=右边界(x==NX-1) Dirichlet，左边界全展开
+    thermal_init_mode: 1   # 1=线性梯度初始化（T0_init在左，T0_inlet在右），立即建立空间温差
+    lambda_fluid: 0.6
+    lambda_hydrate: 0.49
+    lambda_solid: 0.9
+    rhocp_fluid: 4200000.0
+    rhocp_hydrate: 2100000.0
+    rhocp_solid: 2000000.0
+
+  concentration:
+    D_mol_water: 1.85e-9
+    Henry_KH: 0.1
+    Cm_init: 0.0
+
+  reaction:
+    k0_rxn: 36000.0
+    Ea_rxn: 97500.0
+    e1_peq: 33.12
+    e2_peq: -9005.5
+    latent_heat: 43000.0
+
+  vop:
+    Vm_hydrate: 2.274e-5
+    Vh_init: 1.0
+    vop_terminate_frac: 0.01
+
+  units:
+    dx_phys: 1.0e-5
+    dt_phys: 1.0e-6

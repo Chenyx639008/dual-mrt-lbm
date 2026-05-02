@@ -185,7 +185,11 @@ void init_device_variable_hydrate(const RuntimeParams& P);
 // ============================================================
 // §7  热场（Phase 1）函数声明
 // ============================================================
-void init_thermal_field(Therm_dev& TH, const int* pointsflag);
+// thermal_init_mode: 0=uniform(T0_init), 1=linear gradient(T0_init→T0_inlet along bc_side axis)
+void init_thermal_field(Therm_dev& TH, const int* pointsflag,
+                        int thermal_init_mode = 0,
+                        double T0_inlet = 285.0,
+                        int    bc_side  = 0);
 
 // 每时间步热场演化（碰撞→流→边界）
 // h_T_inlet: 宿主侧标量，来自 RuntimeParams::T0_inlet
@@ -193,7 +197,8 @@ void step_thermal(Therm_dev& TH,
                   const double* ux_mix, const double* uy_mix,
                   const double* S_latent,
                   const int* pointsflag,
-                  double h_T_inlet);
+                  double h_T_inlet,
+                  int    bc_side = 0);
 
 // ============================================================
 // §8  浓度场（Phase 2）函数声明

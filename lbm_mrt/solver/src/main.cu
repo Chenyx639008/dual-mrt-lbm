@@ -17,6 +17,11 @@
 #include "../include/sim_utils.h"
 using namespace std::chrono;
 
+// LBM.cu 中定义的几何 kernel（通过 -rdc=true 跨文件可见）
+extern __global__ void mark_fluid_solid(int* pointsflag);
+extern __global__ void mark_boundary(int* pointsflag);
+extern __global__ void mark_ghost(int* pointsflag);
+
 // 线程网格默认配置（大多核用这个；特殊核可另行覆盖）
 const int nThreadsx = 32, nThreadsy = 1;// CUDA 线程配置，以后可修改为16，16
 dim3 threads(nThreadsx,nThreadsy,1);
@@ -57,8 +62,21 @@ int main(int argc, char** argv){
     push_device_constants(P);      //  本次 run 的动态常量（驱动、ρ_init、τ、κ 等）到 __constant__
 
     Porous_host porous;
-    build_and_upload_geometry_from_tecplot(P, M_dev);  // 新的：直接从 tecplot
-    init_geometry(M_dev.pointsflag);    // 保留：根据 flag 分类 ghost/流体/固体
+    if (P.geom_file.empty()) {
+        // 解析几何：build_circle_array 生成颗粒阵列 → upload d_obs → mark_fluid_solid 填充 pointsflag
+        build_and_upload_geometry(P, porous);
+        mark_fluid_solid<<<grid, threads>>>(M_dev.pointsflag);
+        CUDA_CHECK(cudaGetLastError());
+        mark_boundary<<<grid, threads>>>(M_dev.pointsflag);
+        CUDA_CHECK(cudaGetLastError());
+        mark_ghost<<<grid, threads>>>(M_dev.pointsflag);
+        CUDA_CHECK(cudaGetLastError());
+        cudaDeviceSynchronize();
+    } else {
+        // Tecplot 几何：从 .plt 文件读 flag 后再分类 ghost/边界
+        build_and_upload_geometry_from_tecplot(P, M_dev);
+        init_geometry(M_dev.pointsflag);
+    }
     init_all(M_dev, A_dev, B_dev);      // A/B 两相与混合场初始化（ρ/ψ/fin 等）
     dbg_consts_once<<<1,1>>>();         // 可选：在设备侧打印/校验一次常量（调试用）
     cudaDeviceSynchronize();
@@ -81,7 +99,8 @@ int main(int argc, char** argv){
         alloc_therm(TH_dev);
         alloc_conc(CN_dev);
         alloc_vop(VP_dev);
-        init_thermal_field(TH_dev, M_dev.pointsflag);
+        init_thermal_field(TH_dev, M_dev.pointsflag,
+                           P.thermal_init_mode, P.T0_inlet, P.thermal_bc_side);
         init_conc_field(CN_dev, M_dev.pointsflag);
         init_vop(VP_dev, M_dev.pointsflag, P.Vh_init);
         printf("[hydrate] 水合物场初始化完成。\n");

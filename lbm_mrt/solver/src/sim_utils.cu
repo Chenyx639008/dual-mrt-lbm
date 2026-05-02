@@ -362,6 +362,8 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
     geti("hydrate_start_step",    r.hydrate_start_step);
     get("T0_init",                r.T0_init);
     get("T0_inlet",               r.T0_inlet);
+    geti("thermal_bc_side",       r.thermal_bc_side);
+    geti("thermal_init_mode",     r.thermal_init_mode);
     get("lambda_fluid",           r.lambda_fluid);
     get("lambda_hydrate",         r.lambda_hydrate);
     get("lambda_solid",           r.lambda_solid);
@@ -820,7 +822,7 @@ RunResult run_stage_hydrate(Fluid_dev& A, Fluid_host& AH,
             // 2. 潜热源项
             compute_latent_heat_source(VP, CN, TH, MX.pointsflag);
             // 3. 热场（含源项 S_latent）
-            step_thermal(TH, MX.ux, MX.uy, VP.S_latent, MX.pointsflag, P.T0_inlet);
+            step_thermal(TH, MX.ux, MX.uy, VP.S_latent, MX.pointsflag, P.T0_inlet, P.thermal_bc_side);
             // 4. VOP 固相更新（返回翻转数；>0 时 ghost 已重建）
             int n_conv = step_vop(VP, TH, CN, A, B, MX);
             if (n_conv > 0) {

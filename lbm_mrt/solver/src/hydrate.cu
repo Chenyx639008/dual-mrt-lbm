@@ -178,19 +178,34 @@ __device__ __forceinline__ double get_omega_T(unsigned char mat)
     return 1.0 / (0.5 + alpha / cs2_5);
 }
 
-// 将 h_in 和 T 初始化为均匀温度 T0_init
-// 流体节点：h_in[k] = h_eq(T0, u=0) = w5[k] * T0
-// 固/水合物节点：h_in[k] = h_eq(T0, u=0)（保持温度一致，后续边界会覆盖）
-// ghost/boundary 节点：同上
+// 将 h_in 和 T 初始化。
+// init_mode=0: 全域均匀 T0_init
+// init_mode=1: 沿 bc_side 方向线性梯度 T0_init(冷端) → T0_inlet(热端)
+//   bc_side=3(右热): T(x) = T0_init + (T0_inlet-T0_init)*x/(NX-1)
+//   bc_side=2(左热): T(x) = T0_inlet - (T0_inlet-T0_init)*x/(NX-1)
+//   bc_side=0(底热): T(y) = T0_init + (T0_inlet-T0_init)*(NY-1-y)/(NY-1)
+//   bc_side=1(顶热): T(y) = T0_init + (T0_inlet-T0_init)*y/(NY-1)
 __global__ void kernel_init_thermal(double* h_in, double* T,
-                                     const int* pointsflag)
+                                     const int* pointsflag,
+                                     int init_mode,
+                                     double T0_inlet,
+                                     int    bc_side)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= NX || y >= NY) return;
 
     const size_t s = idx_scalar(x, y);
-    const double T0 = d_T0_init;
+    double T0 = d_T0_init;
+
+    if (init_mode == 1) {
+        double frac = 0.0;
+        if      (bc_side == 3) frac = (double)x / (NX - 1);
+        else if (bc_side == 2) frac = 1.0 - (double)x / (NX - 1);
+        else if (bc_side == 1) frac = (double)y / (NY - 1);
+        else                   frac = 1.0 - (double)y / (NY - 1); // bc_side==0
+        T0 = d_T0_init + (T0_inlet - d_T0_init) * frac;
+    }
 
     T[s] = T0;
     for (int k = 0; k < Q5; ++k)
@@ -351,20 +366,20 @@ __global__ void kernel_stream_thermal(
 // ============================================================
 // §8  边界条件核函数（温度场）
 // ============================================================
-// 策略：
-//   y==0 行（ghost，入口侧）：固定 T=T_inlet，h_in[k] = h_eq(T_inlet, u=0)
-//   y==NY-1 行（ghost，出口侧）：全展开（copy 来自 y=NY-2）
-//   固体/水合物鬼节点（flag==-1 且 d_wall_mat>0）：全反弹
-//     h_in[k] = h_out[opp5[k]]   （保持热绝缘/共轭由弛豫代理完成）
-//
-// 注意：共轭热传递的温度跳变通过 collide 中空间可变 ωT 自然实现，
-//       不需要额外的显式界面处理（Zhang 2019 / Karani & Huber 2015 方法）
+// 策略（thermal_bc_side 控制热 Dirichlet 边界朝向）：
+//   side=0: 底边 y==0 为热 Dirichlet，顶边 y==NY-1 全展开（原始行为）
+//   side=1: 顶边 y==NY-1 为热 Dirichlet，底边 y==0   全展开
+//   side=2: 左边 x==0   为热 Dirichlet，右边 x==NX-1 全展开
+//   side=3: 右边 x==NX-1 为热 Dirichlet，左边 x==0  全展开
+//           各自对面为绝热全展开；x 方向的 y==0/NY-1 边界也做全展开
+// 固体/水合物鬼节点（flag==-1 且 mat>0）：全反弹（共轭热传递由 collide 弛豫代理）
 
 __global__ void kernel_boundary_thermal(
           double* __restrict__ h_in,
     const double* __restrict__ h_out,
     const int*    __restrict__ pointsflag,
-    double T_inlet)
+    double T_inlet,
+    int    bc_side)   // 0=bottom(y==0), 1=top(y==NY-1), 2=left(x==0), 3=right(x==NX-1)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -373,52 +388,68 @@ __global__ void kernel_boundary_thermal(
     const size_t s  = idx_scalar(x, y);
     const int    fl = pointsflag[s];
 
-    // ---- 入口：y==0 ghost 层（固定温度 Dirichlet）----
-    if (y == 0 && fl == -1) {
+    // ---- Dirichlet 热边界（hot side）----
+    const bool is_hot = (bc_side == 0 && y == 0           && fl == -1)
+                     || (bc_side == 1 && y == (int)NY - 1 && fl == -1)
+                     || (bc_side == 2 && x == 0           && fl == -1)
+                     || (bc_side == 3 && x == (int)NX - 1 && fl == -1);
+    if (is_hot) {
         for (int k = 0; k < Q5; ++k)
-            h_in[idx5(k, x, y)] = w5_gpu[k] * T_inlet;  // h_eq(T_inlet, u=0)
+            h_in[idx5(k, x, y)] = w5_gpu[k] * T_inlet;
         return;
     }
 
-    // ---- 出口：y==NY-1 ghost 层（全展开：复制内层）----
-    if (y == NY - 1 && fl == -1) {
+    // ---- 对面绝热出口：全展开（copy 紧邻内层节点）----
+    const bool is_outflow = (bc_side == 0 && y == (int)NY - 1 && fl == -1)
+                          || (bc_side == 1 && y == 0           && fl == -1)
+                          || (bc_side == 2 && x == (int)NX - 1 && fl == -1)
+                          || (bc_side == 3 && x == 0           && fl == -1);
+    if (is_outflow) {
+        // x 向边界：从 x±1 复制；y 向边界：从 y±1 复制
+        int xi = (bc_side == 2) ? 1
+               : (bc_side == 3) ? (int)NX - 2
+               : x;
+        int yi = (bc_side == 0) ? (int)NY - 2
+               : (bc_side == 1) ? 1
+               : y;
         for (int k = 0; k < Q5; ++k)
-            h_in[idx5(k, x, y)] = h_in[idx5(k, x, NY - 2)];
+            h_in[idx5(k, x, y)] = h_in[idx5(k, xi, yi)];
         return;
     }
 
     // ---- 固体/水合物鬼节点（flag==-1，mat>0）：全反弹 ----
-    // 这些节点夹在固体和流体之间，通过反弹实现零法向通量
-    // （共轭热传递在内部通过弛豫自然实现，见 collide_thermal 中 get_omega_T）
     if (fl == -1) {
         unsigned char mat = d_wall_mat[s];
         if (mat > 0) {
-            // 全反弹
             for (int k = 0; k < Q5; ++k)
                 h_in[idx5(k, x, y)] = h_out[idx5(opp5_gpu[k], x, y)];
         }
         return;
     }
 
-    // ---- 边界节点（flag==0）：流体侧，由 stream 填充，无需额外处理 ----
+    // ---- 其余边界节点（flag==0）：由 stream 填充，无需额外处理 ----
 }
 
 // ============================================================
 // §9  宿主函数：每步热场演化
 // ============================================================
-void init_thermal_field(Therm_dev& TH, const int* pointsflag)
+void init_thermal_field(Therm_dev& TH, const int* pointsflag,
+                        int thermal_init_mode, double T0_inlet, int bc_side)
 {
-    kernel_init_thermal<<<grid, threads>>>(TH.h_in, TH.T, pointsflag);
+    kernel_init_thermal<<<grid, threads>>>(TH.h_in, TH.T, pointsflag,
+                                           thermal_init_mode, T0_inlet, bc_side);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 }
 
-// h_T_inlet: 宿主侧标量，由调用方从 RuntimeParams 传入，避免直接读 __constant__
+// h_T_inlet:  宿主侧标量，由调用方从 RuntimeParams 传入，避免直接读 __constant__
+// bc_side:    热 Dirichlet 边界朝向（0=底 1=顶 2=左 3=右，与 kernel_boundary_thermal 一致）
 void step_thermal(Therm_dev& TH,
                   const double* ux_mix, const double* uy_mix,
                   const double* S_latent,
                   const int* pointsflag,
-                  double h_T_inlet)
+                  double h_T_inlet,
+                  int    bc_side)
 {
     // 1) 宏观温度更新（碰撞前）
     kernel_update_T<<<grid, threads>>>(TH.h_in, TH.T, pointsflag);
@@ -434,9 +465,9 @@ void step_thermal(Therm_dev& TH,
     kernel_stream_thermal<<<grid, threads>>>(TH.h_in, TH.h_out, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 
-    // 4) 边界条件（传入宿主侧 T_inlet）
+    // 4) 边界条件（传入宿主侧 T_inlet 和 bc_side）
     kernel_boundary_thermal<<<grid, threads>>>(
-        TH.h_in, TH.h_out, pointsflag, h_T_inlet);
+        TH.h_in, TH.h_out, pointsflag, h_T_inlet, bc_side);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -821,7 +852,7 @@ int step_hydrate_physics(VOP_dev& VP, Therm_dev& TH, Conc_dev& CN,
     //   Flow（evolution_all 已在外部调用）→ Conc → LatentHeat → Thermal → VOP
     step_conc(CN, TH, MX.ux, MX.uy, A.rho, B.rho, VP, MX.pointsflag);
     compute_latent_heat_source(VP, CN, TH, MX.pointsflag);
-    step_thermal(TH, MX.ux, MX.uy, VP.S_latent, MX.pointsflag, P.T0_inlet);
+    step_thermal(TH, MX.ux, MX.uy, VP.S_latent, MX.pointsflag, P.T0_inlet, P.thermal_bc_side);
     int n_conv = step_vop(VP, TH, CN, A, B, MX);
 
     return n_conv;

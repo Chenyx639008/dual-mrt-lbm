@@ -534,10 +534,20 @@ __global__ void mark_fluid_solid(int* pointsflag)
         }
     }
 
-    // 边界/ghost 的覆写仅对流体格生效
-    if (flag > 0) {
-        if (y == 0 || y == NY-1)      flag = -1; //
-        else if (y == 1 || y == NY-2) flag =  0; //
+    // y=0/NY-1 是域边界 ghost 行：
+    //   流体格 → 标为 ghost(-1, mat=0，后续 mark_ghost 再覆写邻居)
+    //   水合物格(-3) → 强制降为固体(-2, mat=1)，防止 VOP 翻转后 BC 缺失导致发散
+    //   固体格(-2) → 保持不变
+    if (y == 0 || y == (int)NY - 1) {
+        if (flag > 0) {
+            flag = -1;
+            mat  = 0;
+        } else if (flag == -3) {
+            flag = -2;   // 水合物→固体，永不被 VOP 消耗
+            mat  = 1;
+        }
+    } else if (y == 1 || y == (int)NY - 2) {
+        if (flag > 0) flag = 0;   // 流体→边界
     }
 
     pointsflag[idx] = flag;

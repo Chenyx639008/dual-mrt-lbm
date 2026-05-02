@@ -88,7 +88,11 @@ struct RuntimeParams {
 
   // 热场（DDF 热 LBM）
   double T0_init             = 278.15; // 初始均匀温度 (K)
-  double T0_inlet            = 285.0;  // 入口/顶部固定温度边界 (K)
+  double T0_inlet            = 285.0;  // 入口固定温度边界 (K)
+  // 热 Dirichlet 边界所在侧：0=底边(y==0), 1=顶边(y==NY-1), 2=左边(x==0), 3=右边(x==NX-1)
+  int    thermal_bc_side     = 0;
+  // 温度场初始化模式：0=均匀(T0_init), 1=线性梯度(T0_init→T0_inlet 沿 bc_side 方向)
+  int    thermal_init_mode   = 0;
   double lambda_fluid        = 0.6;    // 水相热导率 W/(m·K)
   double lambda_hydrate      = 0.49;   // 水合物热导率 W/(m·K)
   double lambda_solid        = 0.9;    // 石英颗粒热导率 W/(m·K)
