@@ -48,6 +48,27 @@ struct RuntimeParams {
   double sigmaA= 0.11;
   double kappa = 0.6;
 
+  // ── Huang & Wu (2016) SCMP 参数 ──
+  int    pp_mode      = 0;           // 0=legacy MCMP, 1=Huang SCMP
+  double k1_huang     = 1.0 / 6.0;   // 表面张力 knob (Eq. 59-62)
+  double k2_huang     = 0.0;         // 二阶 σ 参量
+  double kd_huang     = -1.0 / 12.0; // 密度比参量 (Eq. 59)
+  double alpha_meq    = 1.0;         // meq[1] 系数 (Eq. 5)
+  double cs_a         = 1.0;         // Carnahan-Starling a (plan default)
+  double cs_b         = 4.0;         // Carnahan-Starling b
+  double cs_R         = 1.0;         // Carnahan-Starling R
+  double cs_T         = 0.9;         // Carnahan-Starling reduced temperature T/Tc (paper: 0.9)
+  double cs_G         = -1.0;        // Carnahan-Starling G 参数
+  double huang_R0     = 40.0;        // 初始液滴半径
+  double huang_xc     = 128.0;       // 初始液滴中心 x
+  double huang_yc     = 128.0;       // 初始液滴中心 y
+  double huang_W      = 3.0;         // 界面厚度
+  int    huang_init_mode = 1;        // 1=droplet, 2=flat interface
+  double huang_rho_g  = 0.0;         // 共存气相密度（0=从init kernel估算）
+  double huang_rho_l  = 0.0;         // 共存液相密度（0=从init kernel估算）
+  double tau_huang     = 1.5;         // SCMP relaxation time τ (paper: τ=1.5)
+  double Lambda_huang  = 1.0/12.0;    // Λ for s_q formula (paper: 1/12)
+
   // 断点控制
   int CP_EVERY = 50000;     // 每多少步存一次档；建议 eq 阶段 5000~20000，flow 阶段 10000+
   int CP_KEEP  = 2;     // 保留最近 N 份
@@ -248,3 +269,8 @@ RunResult run_equilibrate_then_flow(Fluid_dev& A, Fluid_host& AH,
 
 /* --------- 摘要输出 --------- */
 void write_run_summary(const RunResult& R, int interval, const RuntimeParams& P);
+
+// ── Huang & Wu (2016) SCMP (gated by HUANG_256_BUILD at compile time) ──
+#ifdef HUANG_256_BUILD
+void run_scmp_huang(const RuntimeParams& P, const char* params_path);
+#endif

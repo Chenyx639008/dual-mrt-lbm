@@ -339,6 +339,18 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
     get("GAB", r.GAB); get("GBA", r.GBA); get("sigmaA", r.sigmaA);
     get("kappa", r.kappa);
 
+    // ── Huang & Wu (2016) SCMP 参数 ──
+    geti("pp_mode", r.pp_mode);
+    get("k1_huang", r.k1_huang); get("k2_huang", r.k2_huang);
+    get("kd_huang", r.kd_huang); get("alpha_meq", r.alpha_meq);
+    get("cs_a", r.cs_a); get("cs_b", r.cs_b); get("cs_R", r.cs_R);
+    get("cs_T", r.cs_T); get("cs_G", r.cs_G);
+    get("huang_R0", r.huang_R0); get("huang_xc", r.huang_xc);
+    get("huang_yc", r.huang_yc); get("huang_W", r.huang_W);
+    get("huang_rho_g", r.huang_rho_g); get("huang_rho_l", r.huang_rho_l);
+    get("tau_huang", r.tau_huang); get("Lambda_huang", r.Lambda_huang);
+    geti("huang_init_mode", r.huang_init_mode);
+
     geti("CP_EVERY", r.CP_EVERY);
     geti("CP_KEEP",  r.CP_KEEP);
     geti("CP_RESUME",r.CP_RESUME);
@@ -522,6 +534,15 @@ void print_params_summary(const RuntimeParams& p){
         << "[COUPL] GAB=" << p.GAB << " GBA=" << p.GBA
         << " | sigmaA=" << p.sigmaA << "\n"
 
+        << "[HUANG] pp_mode=" << p.pp_mode
+        << " | k1=" << p.k1_huang << " k2=" << p.k2_huang
+        << " kd=" << p.kd_huang << " alpha_meq=" << p.alpha_meq << "\n"
+        << "         CS: a=" << p.cs_a << " b=" << p.cs_b
+        << " R=" << p.cs_R << " T=" << p.cs_T << " G=" << p.cs_G << "\n"
+        << "         init: mode=" << p.huang_init_mode
+        << " R0=" << p.huang_R0 << " xc=" << p.huang_xc
+        << " yc=" << p.huang_yc << " W=" << p.huang_W << "\n"
+
         << "[WETMF] GAw(theta) = m*(theta - c)"
         << " | m=" << p.GAw_m << " c=" << p.GAw_c
         << " (denom≈" << denom << ")\n"
@@ -593,9 +614,55 @@ void push_device_constants(const RuntimeParams& p){
     CK(cudaMemcpyToSymbol(d_GBA,   &p.GBA,    sizeof(double)));
     CK(cudaMemcpyToSymbol(d_sigmaA,&p.sigmaA,sizeof(double)));
 
+    // ── Huang & Wu (2016) SCMP ──
+    CK(cudaMemcpyToSymbol(d_pp_mode,   &p.pp_mode,   sizeof(int)));
+    CK(cudaMemcpyToSymbol(d_k1_huang,  &p.k1_huang,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_k2_huang,  &p.k2_huang,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_kd_huang,  &p.kd_huang,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_alpha_meq, &p.alpha_meq, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_cs_a,      &p.cs_a,      sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_cs_b,      &p.cs_b,      sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_cs_R,      &p.cs_R,      sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_cs_T,      &p.cs_T,      sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_cs_G,      &p.cs_G,      sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_R0,  &p.huang_R0,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_xc,  &p.huang_xc,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_yc,  &p.huang_yc,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_W,   &p.huang_W,   sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_rho_g, &p.huang_rho_g, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_rho_l, &p.huang_rho_l, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_init_mode, &p.huang_init_mode, sizeof(int)));
+    CK(cudaMemcpyToSymbol(d_tau_huang,  &p.tau_huang,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_Lambda_huang, &p.Lambda_huang, sizeof(double)));
 
-    double A_a_host[9] = {1.0, 1/tau_e, 1/tau_t, 1.0, 1/tau_q, 1.0, 1/tau_q, 1/p.tau_p_a, 1/p.tau_p_a};
-    double A_b_host[9] = {1.0, 1/tau_e, 1/tau_t, 1.0, 1/tau_q, 1.0, 1/tau_q, 1/p.tau_p_b, 1/p.tau_p_b};
+
+    double A_a_host[9], A_b_host[9];
+    if (p.pp_mode == 1) {
+        // ── Huang & Wu (2016) paper: τ = tau_huang, s_q formula with Λ ──
+        double tau = p.tau_huang;
+        double Lambda = p.Lambda_huang;
+        double s_paper = 1.0 / tau;  // s_p = s_e = s_ε = 1/τ
+        double s_q_paper = 1.0 / (0.5 + Lambda / (tau - 0.5));  // Eq. from paper
+        A_a_host[0] = 1.0;       // ρ: conserved
+        A_a_host[1] = s_paper;   // e:  s_e = 1/τ
+        A_a_host[2] = s_paper;   // ε:  s_ε = 1/τ
+        A_a_host[3] = 1.0;       // j_x: conserved
+        A_a_host[4] = s_q_paper; // q_x: s_q from formula
+        A_a_host[5] = 1.0;       // j_y: conserved
+        A_a_host[6] = s_q_paper; // q_y: s_q from formula
+        A_a_host[7] = s_paper;   // p_xx: s_p = 1/τ
+        A_a_host[8] = s_paper;   // p_xy: s_p = 1/τ
+        // B-phase unused in SCMP but set to same for safety
+        for (int i = 0; i < 9; ++i) A_b_host[i] = A_a_host[i];
+    } else {
+        // Legacy MCMP relaxation
+        A_a_host[0] = 1.0; A_a_host[1] = 1/tau_e; A_a_host[2] = 1/tau_t;
+        A_a_host[3] = 1.0; A_a_host[4] = 1/tau_q; A_a_host[5] = 1.0;
+        A_a_host[6] = 1/tau_q; A_a_host[7] = 1/p.tau_p_a; A_a_host[8] = 1/p.tau_p_a;
+        A_b_host[0] = 1.0; A_b_host[1] = 1/tau_e; A_b_host[2] = 1/tau_t;
+        A_b_host[3] = 1.0; A_b_host[4] = 1/tau_q; A_b_host[5] = 1.0;
+        A_b_host[6] = 1/tau_q; A_b_host[7] = 1/p.tau_p_b; A_b_host[8] = 1/p.tau_p_b;
+    }
     CK(cudaMemcpyToSymbol(A_a_gpu, A_a_host, sizeof(A_a_host)));
     CK(cudaMemcpyToSymbol(A_b_gpu, A_b_host, sizeof(A_b_host)));
 }
@@ -1006,3 +1073,110 @@ void write_run_summary(const RunResult& R, int interval, const RuntimeParams& P)
   f << "flow_resumed "      << (R.flow_resumed ? 1 : 0) << "\n";
   f << "flow_resume_step "  << R.flow_resume_step << "\n";
 }
+
+/* =====================================================================
+ * ── Huang & Wu (2016) SCMP run loop ──
+ * Single-component multiphase on 256×256 periodic domain.
+ * ===================================================================== */
+#ifdef HUANG_256_BUILD
+void run_scmp_huang(const RuntimeParams& P, const char* params_path)
+{
+    // ── Allocate single fluid device memory ──
+    Fluid_dev F;
+    alloc_fluid(F);
+
+    // ── Allocate pointsflag (all fluid = 1) ──
+    size_t N = size_t(NX) * NY;
+    int* pointsflag_dev = nullptr;
+    cudaMalloc(&pointsflag_dev, N * sizeof(int));
+    cudaMemset(pointsflag_dev, 0, N * sizeof(int));
+
+    // ── Init device constants and SCMP initial conditions ──
+    init_device_variable();
+    push_device_constants(P);
+    dbg_consts_once<<<1,1>>>();
+    cudaDeviceSynchronize();
+
+    init_all_scmp(F.rho, F.fin, F.fout, F.min, F.mout, pointsflag_dev);
+    cudaDeviceSynchronize();
+
+    // ── Host-side buffers for output ──
+    std::vector<double> h_rho(N), h_ux(N), h_uy(N), h_pressure(N);
+    std::vector<int>    h_flag(N);
+
+    // ── Output directory (respects file_dir from params or LBM_FILE_DIR env) ──
+    std::string out_dir = P.file_dir + "/outputdata_scmp";
+    namespace fs = std::filesystem;
+    fs::create_directories(out_dir);
+
+    // Write a copy of params.txt into the output directory for traceability
+    {
+        std::ifstream src(params_path);
+        if (src) {
+            std::ofstream dst(out_dir + "/params.txt");
+            dst << src.rdbuf();
+        }
+    }
+
+    printf("[scmp] output dir: %s\n", out_dir.c_str());
+    printf("[scmp] Starting SCMP time loop: %d steps, output every %d\n",
+           static_cast<int>(NSTEPS), P.OUTPUT_EVERY);
+
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    // ── Time loop ──
+    for (int step = 0; step < static_cast<int>(NSTEPS); ++step) {
+        evolution_scmp(
+            F.rho, F.ux, F.uy, F.psi, F.pressure,
+            F.Fx_mol, F.Fy_mol,
+            F.fin, F.fout, F.min, F.mout,
+            F.S, F.C,
+            pointsflag_dev);
+
+        // Periodic output
+        if (P.OUTPUT_EVERY > 0 && step % P.OUTPUT_EVERY == 0) {
+            cudaMemcpy(h_rho.data(),      F.rho,      N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_ux.data(),       F.ux,       N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_uy.data(),       F.uy,       N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_pressure.data(), F.pressure, N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_flag.data(),     pointsflag_dev, N*sizeof(int), cudaMemcpyDeviceToHost);
+
+            outputvtk_scmp(step, out_dir, "flow", "scmp_step", h_rho, h_ux, h_uy, h_pressure, h_flag);
+            printf("[scmp] step %d output written\n", step);
+        }
+    }
+
+    // Final output
+    cudaMemcpy(h_rho.data(),      F.rho,      N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_ux.data(),       F.ux,       N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_uy.data(),       F.uy,       N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_pressure.data(), F.pressure, N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_flag.data(),     pointsflag_dev, N*sizeof(int), cudaMemcpyDeviceToHost);
+
+    int final_step = static_cast<int>(NSTEPS);
+    outputvtk_scmp(final_step, out_dir, "flow", "scmp_final", h_rho, h_ux, h_uy, h_pressure, h_flag);
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double elapsed = std::chrono::duration<double>(t_end - t_start).count();
+    printf("[scmp] Done. %d steps in %.1f s (%.1f MLUPS)\n",
+           final_step, elapsed, (final_step * NX * NY / elapsed / 1e6));
+
+    // ── Write run summary ──
+    {
+        std::ofstream summary(out_dir + "/run_summary.txt");
+        summary.setf(std::ios::scientific);
+        summary << std::setprecision(6);
+        summary << "NSTEPS " << final_step << "\n";
+        summary << "elapsed_s " << elapsed << "\n";
+        summary << "MLUPS " << (final_step * NX * NY / elapsed / 1e6) << "\n";
+        summary << "pp_mode " << P.pp_mode << "\n";
+        summary << "k1_huang " << P.k1_huang << "\n";
+        summary << "cs_T " << P.cs_T << "\n";
+        summary << "cs_a " << P.cs_a << "\n";
+    }
+
+    // ── Cleanup ──
+    free_fluid(F);
+    cudaFree(pointsflag_dev);
+}
+#endif // HUANG_256_BUILD

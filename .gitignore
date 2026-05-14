@@ -77,6 +77,9 @@ target/
 # results
 results/
 
+# validation reference (legacy Li-MCMP) — root-level only
+/validation/
+
 # reference PDFs (large, copyright)
 references/
 

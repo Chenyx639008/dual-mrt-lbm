@@ -27,6 +27,7 @@ _HYDRATE_SOURCES = ["hydrate.cu", "hydrate_vop.cu"]
 
 def build(
     hydrate: bool = False,
+    huang: bool = False,
     arch: str = "sm_120",
     debug: bool = False,
     output_dir: str | None = None,
@@ -36,6 +37,7 @@ def build(
 
     Args:
         hydrate:    If True, compile the hydrate-enabled variant.
+        huang:      If True, compile the Huang & Wu (2016) SCMP variant (mcmp_huang_256).
         arch:       GPU SM architecture string, e.g. "sm_120" for RTX 5090 / H100.
         debug:      If True, add -g -G flags for device-side debugging.
         output_dir: Directory to place the compiled binary. Defaults to lbm_mrt/solver/.
@@ -51,7 +53,12 @@ def build(
     source_names = _BASE_SOURCES + (_HYDRATE_SOURCES if hydrate else [])
     sources = [os.path.join(SOLVER_SRC, name) for name in source_names]
 
-    binary_name = "mcmp_sim_hydrate" if hydrate else "mcmp_sim"
+    if huang:
+        binary_name = "mcmp_huang_256"
+    elif hydrate:
+        binary_name = "mcmp_sim_hydrate"
+    else:
+        binary_name = "mcmp_sim"
     output_path = os.path.join(out_dir, binary_name)
 
     cmd: list[str] = [
@@ -62,9 +69,13 @@ def build(
         "-lineinfo",
         f"-I{SOLVER_INC}",
         # Each -gencode flag must be two separate list elements for subprocess
-        "-gencode", f"arch={compute},code={arch}",
-        "-gencode", f"arch={compute},code={compute}",
+        "-gencode",
+        f"arch={compute},code={arch}",
+        "-gencode",
+        f"arch={compute},code={compute}",
     ]
+    if huang:
+        cmd.append("-DHUANG_256_BUILD")
     if hydrate:
         cmd.append("-DHYDRATE_ENABLE")
     if debug:
@@ -102,6 +113,11 @@ def main() -> None:
         help="Build the hydrate-enabled variant (mcmp_sim_hydrate).",
     )
     p.add_argument(
+        "--huang",
+        action="store_true",
+        help="Build the Huang & Wu (2016) SCMP variant (mcmp_huang_256).",
+    )
+    p.add_argument(
         "--arch",
         default="sm_120",
         metavar="SM",
@@ -127,6 +143,7 @@ def main() -> None:
     sys.exit(
         build(
             hydrate=args.hydrate,
+            huang=args.huang,
             arch=args.arch,
             debug=args.debug,
             output_dir=args.output_dir,

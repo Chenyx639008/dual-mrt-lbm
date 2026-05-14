@@ -2,6 +2,12 @@
 // 该文件包含了 CUDA LBM 模型的核心定义和函数声明
 #pragma once //作用是防止重复定义，例如结构体、函数原型、constexpr 变量等。
 /* 只保留最必要的头文件，不要把 <iostream> <fstream> 等重头文件塞进来 */
+
+// ── 编译期守卫：Huang SCMP 与水合物物理互斥 ──
+#if defined(HUANG_256_BUILD) && defined(HYDRATE_ENABLE)
+#error "HUANG_256_BUILD and HYDRATE_ENABLE are mutually exclusive. Use separate builds."
+#endif
+
 #include <cuda_runtime.h>
 #include <cmath>
 #include <vector>
@@ -11,11 +17,19 @@
 #define BLOCK_SIZE 32
 
 /* ------------ ① 网格尺寸与时间控制 ------------------- */
+#ifdef HUANG_256_BUILD
+constexpr unsigned int SCALE   = 1;
+constexpr unsigned int NX      = 256;
+constexpr unsigned int NY      = 256;
+constexpr unsigned int NSTEPS  = 200000;
+constexpr unsigned int NOUTPUT = 5000;
+#else
 constexpr unsigned int SCALE   = 1;
 constexpr unsigned int NX      = 339* SCALE;
 constexpr unsigned int NY      = 212* SCALE;
 constexpr unsigned int NSTEPS  = 5000000;
 constexpr unsigned int NOUTPUT = 50000;
+#endif
 /* ------------ ② D2Q9 几何与权重 ----------------------- */
 constexpr int Q = 9;
 inline constexpr int   e[Q][2] = {{0,0},{1,0},{0,1},{-1,0},{0,-1},{1,1},{-1,1},{-1,-1},{1,-1}};
@@ -122,6 +136,15 @@ __constant__ double d_GBA;      // B<-A 跨相作用系数
 __constant__ double d_sigmaA;   // A相表面张力（如需在核函数中直接用）
 __constant__ double d_drive_scale;
 
+// ── Huang & Wu (2016) SCMP ──
+__constant__ int    d_pp_mode;
+__constant__ double d_k1_huang, d_k2_huang, d_kd_huang, d_alpha_meq;
+__constant__ double d_cs_a, d_cs_b, d_cs_R, d_cs_T, d_cs_G;
+__constant__ double d_huang_R0, d_huang_xc, d_huang_yc, d_huang_W;
+__constant__ double d_huang_rho_g, d_huang_rho_l;
+__constant__ double d_tau_huang, d_Lambda_huang;
+__constant__ int    d_huang_init_mode;
+
 #else
 extern __device__ __constant__ double GAw_by_mat_gpu[256];
 extern __device__ __constant__ double GBw_by_mat_gpu[256];
@@ -147,6 +170,14 @@ extern __device__ __constant__ double d_drive_scale;//控制力的使用
 extern __device__ __constant__ double d_GAB;
 extern __device__ __constant__ double d_GBA;
 extern __device__ __constant__ double d_sigmaA;
+// ── Huang & Wu (2016) SCMP ──
+extern __device__ __constant__ int    d_pp_mode;
+extern __device__ __constant__ double d_k1_huang, d_k2_huang, d_kd_huang, d_alpha_meq;
+extern __device__ __constant__ double d_cs_a, d_cs_b, d_cs_R, d_cs_T, d_cs_G;
+extern __device__ __constant__ double d_huang_R0, d_huang_xc, d_huang_yc, d_huang_W;
+extern __device__ __constant__ double d_huang_rho_g, d_huang_rho_l;
+extern __device__ __constant__ double d_tau_huang, d_Lambda_huang;
+extern __device__ __constant__ int    d_huang_init_mode;
 #endif
 
 
@@ -174,6 +205,24 @@ __device__ double get_GAB();
 __device__ double get_GBA();
 __device__ double get_sigmaA();
 
+// ── Huang & Wu (2016) SCMP getters ──
+__device__ int    get_pp_mode();
+__device__ double get_k1_huang();
+__device__ double get_k2_huang();
+__device__ double get_kd_huang();
+__device__ double get_alpha_meq();
+__device__ double get_cs_a();
+__device__ double get_cs_b();
+__device__ double get_cs_R();
+__device__ double get_cs_T();
+__device__ double get_cs_G();
+__device__ double get_huang_R0();
+__device__ double get_huang_xc();
+__device__ double get_huang_yc();
+__device__ double get_huang_W();
+__device__ double get_huang_rho_g();
+__device__ double get_huang_rho_l();
+__device__ int    get_huang_init_mode();
 
 //状态方程参数PR-EOS
 namespace eos
@@ -347,4 +396,30 @@ void outputvtk_append_hydrate(const std::string& vtk_path,
                                const std::vector<double>& Vh,
                                const std::vector<double>& diss_rate,
                                const std::vector<double>& pore_origin);
+#endif
+
+// ── Huang & Wu (2016) SCMP (gated by HUANG_256_BUILD at compile time) ──
+#ifdef HUANG_256_BUILD
+void evolution_scmp(
+    double* rho,   double* ux,   double* uy,
+    double* psi,   double* pressure,
+    double* Fx,    double* Fy,
+    double* fin,   double* fout,
+    double* min_m, double* mout_m,
+    double* S,     double* C,
+    int*    pointsflag);
+
+void init_all_scmp(
+    double* rho,   double* fin,   double* fout,
+    double* min_m, double* mout_m,
+    int*    pointsflag);
+
+void outputvtk_scmp(int step, const std::string& folder,
+                     const std::string& prefix,
+                     const std::string& title,
+                     const std::vector<double>& rho,
+                     const std::vector<double>& ux,
+                     const std::vector<double>& uy,
+                     const std::vector<double>& pressure,
+                     const std::vector<int>& pointsflag);
 #endif

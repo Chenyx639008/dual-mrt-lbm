@@ -48,6 +48,24 @@ __device__ __forceinline__ double get_GAB(){ return d_GAB; }
 __device__ __forceinline__ double get_GBA(){ return d_GBA; }
 __device__ __forceinline__ double get_sigmaA(){ return d_sigmaA; }
 
+// ── Huang & Wu (2016) SCMP getters ──
+__device__ __forceinline__ int    get_pp_mode()        { return d_pp_mode; }
+__device__ __forceinline__ double get_k1_huang()       { return d_k1_huang; }
+__device__ __forceinline__ double get_k2_huang()       { return d_k2_huang; }
+__device__ __forceinline__ double get_kd_huang()       { return d_kd_huang; }
+__device__ __forceinline__ double get_alpha_meq()      { return d_alpha_meq; }
+__device__ __forceinline__ double get_cs_a()           { return d_cs_a; }
+__device__ __forceinline__ double get_cs_b()           { return d_cs_b; }
+__device__ __forceinline__ double get_cs_R()           { return d_cs_R; }
+__device__ __forceinline__ double get_cs_T()           { return d_cs_T; }
+__device__ __forceinline__ double get_cs_G()           { return d_cs_G; }
+__device__ __forceinline__ double get_huang_R0()       { return d_huang_R0; }
+__device__ __forceinline__ double get_huang_xc()       { return d_huang_xc; }
+__device__ __forceinline__ double get_huang_yc()       { return d_huang_yc; }
+__device__ __forceinline__ double get_huang_W()        { return d_huang_W; }
+__device__ __forceinline__ double get_huang_rho_g()    { return d_huang_rho_g; }
+__device__ __forceinline__ double get_huang_rho_l()    { return d_huang_rho_l; }
+__device__ __forceinline__ int    get_huang_init_mode(){ return d_huang_init_mode; }
 
 
 __constant__ int e_gpu[Q][2];//D2Q9速度方向向量（如 e[9][2]）
@@ -89,6 +107,13 @@ __global__ void dbg_consts_once(){
         sink += A_a_gpu[0] + A_a_gpu[7] + A_b_gpu[7];
         sink += GAw_by_mat_gpu[1] + GBw_by_mat_gpu[1];
         sink += get_GAB() + get_GBA() + get_sigmaA();
+
+        // ── Huang & Wu (2016) SCMP ──
+        sink += (double)get_pp_mode();
+        sink += get_k1_huang() + get_k2_huang() + get_kd_huang() + get_alpha_meq();
+        sink += get_cs_a() + get_cs_b() + get_cs_R() + get_cs_T() + get_cs_G();
+        sink += get_huang_R0() + get_huang_xc() + get_huang_yc() + get_huang_W();
+        sink += (double)get_huang_init_mode();
 
         // 防止被优化掉
         if (sink < -1e300) printf("sink=%g\n", (double)sink);
@@ -2041,6 +2066,456 @@ __host__ void outputvtk_append_hydrate(const std::string& vtk_path,
     write_scalar("pore_origin",  pore_origin);
 }
 #endif  // HYDRATE_ENABLE
+
+/* =====================================================================
+ * ── Huang & Wu (2016) SCMP (Single-Component Multiphase) ──
+ * Gated by -DHUANG_256_BUILD. Carnahan-Starling EOS + Guo-MRT.
+ * ===================================================================== */
+#ifdef HUANG_256_BUILD
+
+/* ── SCMP Carnahan-Starling EOS kernel ─────────────────────────── */
+__global__ void compute_p_psi_scmp_cs(
+    const double* __restrict__ rho,
+    double*       pressure,
+    double*       psi,
+    const int*    __restrict__ pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] < 0) return;
+
+    double rho_safe = fmax(rho[idx], 1e-8);
+    double cs_a_loc = get_cs_a();
+    double cs_b_loc = get_cs_b();
+    double cs_R_loc = get_cs_R();
+    double cs_T_red = get_cs_T();       // reduced temperature T/Tc
+    double cs_G_loc = get_cs_G();
+
+    // Actual temperature: T = cs_T_red * Tc,  Tc = 0.3773 * a / (b * R)
+    double Tc_cs = 0.3773 * cs_a_loc / (cs_b_loc * cs_R_loc + 1e-20);
+    double T_actual = cs_T_red * Tc_cs;
+
+    // η = bρ/4
+    double eta = cs_b_loc * rho_safe / 4.0;
+    double eta2 = eta * eta;
+    double eta3 = eta2 * eta;
+    double denom = 1.0 - eta;
+    double denom3 = denom * denom * denom;
+    denom3 = fmax(denom3, 1e-12);
+
+    // p = ρRT(1+η+η²-η³)/(1-η)³ - aρ²
+    double p_cs = cs_R_loc * T_actual * rho_safe * (1.0 + eta + eta2 - eta3) / denom3
+                - cs_a_loc * rho_safe * rho_safe;
+    pressure[idx] = fmax(p_cs, 1e-10);
+
+    // ψ = sqrt(2(p − ρcs²) / (G·dx²))
+    double diff = pressure[idx] - rho_safe * cs2_gpu;
+    double numer = 2.0 * fmax(-diff, 0.0);  // -diff > 0 when p < ρcs²
+    double gdenom = fabs(cs_G_loc) * deltax_gpu * deltax_gpu;
+    psi[idx] = sqrt(numer / fmax(gdenom, 1e-12));
+}
+
+/* ── SCMP molecular force kernel ──────────────────────────────── */
+__global__ void compute_molecular_force_scmp(
+    const double*  psi,
+    const double*  rho,
+    double*        Fx,
+    double*        Fy,
+    const int*     pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] < 0) return;
+
+    double psi0 = psi[idx];
+    double G = get_cs_G();
+
+    double sum_x = 0.0, sum_y = 0.0;
+    #pragma unroll
+    for (int k = 1; k < Q; ++k) {
+        int xp = (x + e_gpu[k][0] + NX) % NX;
+        int yp = (y + e_gpu[k][1] + NY) % NY;
+        int idxp = findindex_scalar_gpu(xp, yp);
+
+        double psi_nb = psi[idxp];
+        sum_x += w_F_gpu[k] * e_gpu[k][0] * psi_nb;
+        sum_y += w_F_gpu[k] * e_gpu[k][1] * psi_nb;
+    }
+
+    // F = -G ψ(x) Σ w_k ψ(x+e_k) e_k
+    Fx[idx] = -G * psi0 * sum_x;
+    Fy[idx] = -G * psi0 * sum_y;
+}
+
+/* ── SCMP velocity kernel (half-force shift) ──────────────────── */
+__global__ void compute_velocity_scmp(
+    const double* rho,    const double* fin,
+    const double* Fx,     const double* Fy,
+    double*       ux,     double*       uy,
+    const int*    pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] < 0) return;
+
+    ux[idx] = 0.0; uy[idx] = 0.0;
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        int idxk = findindex_distfun_gpu(x, y, k);
+        ux[idx] += e_gpu[k][0] * fin[idxk];
+        uy[idx] += e_gpu[k][1] * fin[idxk];
+    }
+    double rho_safe = fmax(rho[idx], 1e-6);
+    ux[idx] = (ux[idx] + 0.5 * Fx[idx] * deltat_gpu) / rho_safe;
+    uy[idx] = (uy[idx] + 0.5 * Fy[idx] * deltat_gpu) / rho_safe;
+
+    // Numerical guard
+    const double UMAX = 0.15;
+    double u2 = ux[idx]*ux[idx] + uy[idx]*uy[idx];
+    if (u2 > UMAX*UMAX) {
+        double s = UMAX / sqrt(u2);
+        ux[idx] *= s; uy[idx] *= s;
+    }
+}
+
+/* ── Guo force source term for SCMP (no σ hack) ──────────────── */
+__global__ void compute_S_huang_gpu(
+    const double* ux,     const double* uy,
+    const double* rho,
+    const double* Fx,     const double* Fy,
+    double*       S,
+    const int*    pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] < 0) return;
+
+    double u[2] = { ux[idx], uy[idx] };
+    double F[2] = { Fx[idx], Fy[idx] };
+    double uF = u[0]*F[0] + u[1]*F[1];
+
+    // Clean Guo form per Huang & Wu (2016) Eq. 6 — no sigmaA term
+    S[findindex_distfun_gpu(x, y, 0)] = 0.0;
+    S[findindex_distfun_gpu(x, y, 1)] =  6.0 * uF;
+    S[findindex_distfun_gpu(x, y, 2)] = -6.0 * uF;
+    S[findindex_distfun_gpu(x, y, 3)] =  F[0];
+    S[findindex_distfun_gpu(x, y, 4)] = -F[0];
+    S[findindex_distfun_gpu(x, y, 5)] =  F[1];
+    S[findindex_distfun_gpu(x, y, 6)] = -F[1];
+    S[findindex_distfun_gpu(x, y, 7)] =  2.0 * (u[0]*F[0] - u[1]*F[1]);
+    S[findindex_distfun_gpu(x, y, 8)] =  u[0]*F[1] + u[1]*F[0];
+}
+
+/* ── (Phase 3 placeholder) Q_m kernel for surface tension ─────── */
+__global__ void compute_Q_huang_gpu(
+    const double* rho,     const double* psi,
+    const double* Fx_mol,  const double* Fy_mol,
+    double*       C,
+    const int*    pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] < 0) return;
+
+    double Fx = Fx_mol[idx], Fy = Fy_mol[idx];
+    double F2 = Fx*Fx + Fy*Fy;
+    const double PSI_CUT = 1e-3;
+    double psi2 = psi[idx]*psi[idx] + PSI_CUT*PSI_CUT;
+    double cs_G_loc = get_cs_G();
+    double denom = fabs(cs_G_loc) * psi2 * c_gpu * c_gpu;
+    denom = fmax(denom, 1e-12);
+
+    double k1 = get_k1_huang();
+    double k2 = get_k2_huang();
+
+    double Qm1 = 3.0 * (k1 + 2.0 * k2) * F2 / denom;
+    double Qm7 = k1 * (Fx*Fx - Fy*Fy) / denom;
+    double Qm8 = k1 * Fx * Fy / denom;
+
+    // Bake relaxation rates into C so collision uses + C·δt convention
+    // Use A_a_gpu (relaxation rates s_k) for consistency with collision
+    double se = A_a_gpu[1];  // s_e
+    double st = A_a_gpu[2];  // s_t
+    double sp = A_a_gpu[7];  // s_p (same as A_a_gpu[8])
+    C[findindex_distfun_gpu(x, y, 0)] = 0.0;
+    C[findindex_distfun_gpu(x, y, 1)] =  se * Qm1;
+    C[findindex_distfun_gpu(x, y, 2)] = -st * Qm1;
+    C[findindex_distfun_gpu(x, y, 3)] = 0.0;
+    C[findindex_distfun_gpu(x, y, 4)] = 0.0;
+    C[findindex_distfun_gpu(x, y, 5)] = 0.0;
+    C[findindex_distfun_gpu(x, y, 6)] = 0.0;
+    C[findindex_distfun_gpu(x, y, 7)] =  sp * Qm7;
+    C[findindex_distfun_gpu(x, y, 8)] =  sp * Qm8;
+}
+
+/* ── MRT collision for single-component ──────────────────────── */
+__global__ void mrt_collide_single_component_gpu(
+    const double* rho,
+    const double* S,       const double* C,
+    const double* fin,     double* fout,
+    double*       min_m,   double*       mout_m,
+    const double* ux,      const double* uy,
+    const int*    pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] < 0) return;
+
+    double u_all[2] = { ux[idx], uy[idx] };
+    double rho_loc = rho[idx];
+
+    /* fin → min (forward MRT) */
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        double mk = 0.0;
+        #pragma unroll
+        for (int kk = 0; kk < Q; ++kk) {
+            mk += M_gpu[k][kk] * fin[findindex_distfun_gpu(x, y, kk)];
+        }
+        min_m[findindex_distfun_gpu(x, y, k)] = mk;
+    }
+
+    /* collision: min → mout */
+    double alpha_m = get_alpha_meq();
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        int idxk = findindex_distfun_gpu(x, y, k);
+        double mk = min_m[idxk];
+        double meq_k = meq_gpu(k, rho_loc, u_all);
+
+        // Apply alpha_meq to slot 1 per Huang & Wu (2016) Eq. 5
+        if (k == 1) {
+            // meq[1] = (-2 + 3α|u|²)ρ
+            double u2 = u_all[0]*u_all[0] + u_all[1]*u_all[1];
+            meq_k = (-2.0 + 3.0 * alpha_m * u2) * rho_loc;
+        }
+
+        mout_m[idxk] = mk - A_a_gpu[k] * (mk - meq_k)
+                     + (1.0 - 0.5 * A_a_gpu[k]) * S[idxk] * deltat_gpu
+                     + C[idxk] * deltat_gpu;
+    }
+
+    /* inverse MRT: mout → fout */
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        double fk = 0.0;
+        #pragma unroll
+        for (int kk = 0; kk < Q; ++kk) {
+            fk += Minv_gpu[k][kk] * mout_m[findindex_distfun_gpu(x, y, kk)];
+        }
+        fout[findindex_distfun_gpu(x, y, k)] = fk;
+    }
+
+    // Positivity limiter
+    positivity_limiter(fout, x, y, rho_loc, u_all, g_ctA_any, g_ctA_full);
+}
+
+/* ── Streaming for single-component ──────────────────────────── */
+__global__ void stream_single_component_gpu(
+    double* fin, const double* fout,
+    const int* pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] == 1) {
+        #pragma unroll
+        for (int k = 0; k < Q; ++k) {
+            int xp = (x - e_gpu[k][0] + NX) % NX;
+            int yp = (y - e_gpu[k][1] + NY) % NY;
+            fin[findindex_distfun_gpu(x, y, k)] = fout[findindex_distfun_gpu(xp, yp, k)];
+        }
+    }
+}
+
+/* ── SCMP Tanh droplet / flat-interface initialization ───────── */
+__global__ void init_all_scmp_gpu(
+    double* rho,   double* fin,   double* fout,
+    double* min_m, double* mout_m,
+    int*    pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+
+    // SCMP: all points are fluid
+    pointsflag[idx] = 1;
+
+    // Compute rho from tanh profile (Huang & Wu 2016 Eq. 46a)
+    double cs_a_loc = get_cs_a();
+    double cs_b_loc = get_cs_b();
+    double cs_R_loc = get_cs_R();
+    double cs_T_red = get_cs_T();     // reduced temperature T/Tc
+    double R0  = get_huang_R0();
+    double xc  = get_huang_xc();
+    double yc  = get_huang_yc();
+    double W   = get_huang_W();
+    int    mode = get_huang_init_mode();
+
+    // Critical density & reduced temperature
+    double rho_c = 0.1304 / cs_b_loc;
+    double Tr = cs_T_red;  // cs_T is already T/Tc
+
+    // Estimate coexistence densities from CS critical scaling
+    double rho_l_est = 0.0, rho_g_est = 0.0;
+
+    // Use explicit coexistence densities if provided (host-side Maxwell)
+    double rho_g_set = get_huang_rho_g();
+    double rho_l_set = get_huang_rho_l();
+    if (rho_g_set > 1e-8 && rho_l_set > rho_g_set) {
+        rho_g_est = rho_g_set;
+        rho_l_est = rho_l_set;
+    } else if (Tr < 1.0 && Tr > 0.4) {
+        double dTr = 1.0 - Tr;
+        double rho_avg = rho_c * (1.0 + 0.75 * dTr);
+        double rho_diff = rho_c * 2.4 * pow(dTr, 0.325);
+        rho_l_est = rho_avg + 0.5 * rho_diff;
+        rho_g_est = rho_avg - 0.5 * rho_diff;
+        rho_g_est = fmax(rho_g_est, 1e-4);
+    } else {
+        rho_l_est = 2.0 * rho_c;
+        rho_g_est = 0.1 * rho_c;
+    }
+
+    double rho_mid = 0.5 * (rho_l_est + rho_g_est);
+    double rho_amp = 0.5 * (rho_l_est - rho_g_est);
+
+    double r = 0.0;
+    if (mode == 1) {
+        // Droplet: radial tanh
+        double dx_c = (double)x - xc;
+        double dy_c = (double)y - yc;
+        r = sqrt(dx_c*dx_c + dy_c*dy_c);
+    } else {
+        // Flat interface: y-based
+        r = (double)y;
+    }
+
+    rho[idx] = rho_mid + rho_amp * tanh(2.0 * (R0 - r) / W);
+
+    // Clamp to physical range
+    rho[idx] = fmax(rho[idx], 1e-6);
+    rho[idx] = fmin(rho[idx], 1.0);
+
+    // Initialize f to equilibrium at u=0
+    double u0[2] = {0.0, 0.0};
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        double fk = feq_gpu(k, rho[idx], u0);
+        int idxk = findindex_distfun_gpu(x, y, k);
+        fin[idxk]  = fk;
+        fout[idxk] = fk;
+        min_m[idxk] = 0.0;
+        mout_m[idxk] = 0.0;
+    }
+}
+
+/* ── SCMP one-step evolution driver ──────────────────────────── */
+__host__ void evolution_scmp(
+    double* rho,   double* ux,   double* uy,
+    double* psi,   double* pressure,
+    double* Fx,    double* Fy,
+    double* fin,   double* fout,
+    double* min_m, double* mout_m,
+    double* S,     double* C,
+    int*    pointsflag)
+{
+    const int nThreadsx = 32, nThreadsy = 1;
+    dim3 threads(nThreadsx, nThreadsy, 1);
+    dim3 grid_scmp((NX + nThreadsx - 1) / nThreadsx,
+                   (NY + nThreadsy - 1) / nThreadsy, 1);
+
+    compute_p_psi_scmp_cs<<<grid_scmp, threads>>>(rho, pressure, psi, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    compute_molecular_force_scmp<<<grid_scmp, threads>>>(psi, rho, Fx, Fy, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    compute_velocity_scmp<<<grid_scmp, threads>>>(rho, fin, Fx, Fy, ux, uy, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    compute_S_huang_gpu<<<grid_scmp, threads>>>(ux, uy, rho, Fx, Fy, S, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    compute_Q_huang_gpu<<<grid_scmp, threads>>>(rho, psi, Fx, Fy, C, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    mrt_collide_single_component_gpu<<<grid_scmp, threads>>>(
+        rho, S, C, fin, fout, min_m, mout_m, ux, uy, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    stream_single_component_gpu<<<grid_scmp, threads>>>(fin, fout, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+/* ── SCMP initialization host wrapper ────────────────────────── */
+__host__ void init_all_scmp(
+    double* rho,   double* fin,   double* fout,
+    double* min_m, double* mout_m,
+    int*    pointsflag)
+{
+    const int nThreadsx = 32, nThreadsy = 1;
+    dim3 threads(nThreadsx, nThreadsy, 1);
+    dim3 grid_scmp((NX + nThreadsx - 1) / nThreadsx,
+                   (NY + nThreadsy - 1) / nThreadsy, 1);
+
+    init_all_scmp_gpu<<<grid_scmp, threads>>>(rho, fin, fout, min_m, mout_m, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+/* ── SCMP single-fluid output (VTK, single component) ────────── */
+__host__ void outputvtk_scmp(int step, const std::string& folder,
+                              const std::string& prefix,
+                              const std::string& title,
+                              const std::vector<double>& rho,
+                              const std::vector<double>& ux,
+                              const std::vector<double>& uy,
+                              const std::vector<double>& pressure,
+                              const std::vector<int>& pointsflag)
+{
+    namespace fs = std::filesystem;
+    fs::create_directories(folder);
+    std::string path = folder + "/" + prefix + std::to_string(step) + ".vtk";
+    std::ofstream vtk(path, std::ios::binary);
+    if (!vtk) { std::cerr << "Cannot open " << path << "\n"; return; }
+
+    vtk << "# vtk DataFile Version 3.0\n";
+    vtk << title << "\nBINARY\nDATASET STRUCTURED_POINTS\n";
+    vtk << "DIMENSIONS " << NX << " " << NY << " 1\n";
+    vtk << "ORIGIN 0 0 0\n";
+    vtk << "SPACING 1 1 1\n";
+    vtk << "POINT_DATA " << NX*NY << "\n";
+
+    auto write_scalar = [&](const std::string& name, const std::vector<double>& vec) {
+        vtk << "\nSCALARS " << name << " double\nLOOKUP_TABLE default\n";
+        for (double v : vec) { double t = v; SwapEnd(t); vtk.write(reinterpret_cast<char*>(&t), sizeof(double)); }
+    };
+    write_scalar("rho", rho);
+    write_scalar("ux", ux);
+    write_scalar("uy", uy);
+    write_scalar("pressure", pressure);
+
+    vtk << "\nSCALARS flag int\nLOOKUP_TABLE default\n";
+    for (int f : pointsflag) { int t = f; SwapEnd_int(t); vtk.write(reinterpret_cast<char*>(&t), sizeof(int)); }
+    vtk.close();
+}
+
+#endif // HUANG_256_BUILD
 
 /***********  大小端翻转工具保持不变 ***********/
 

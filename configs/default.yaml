@@ -61,6 +61,26 @@ relaxation:
   GBA: 0.24       # B←A inter-phase interaction coefficient
   sigmaA: 0.11    # A-phase surface tension parameter
 
+# ── Huang & Wu (2016) SCMP (single-component multiphase) ─────────────────
+huang_scmp:
+  pp_mode: 0          # 0=legacy MCMP (PR+ideal), 1=Huang SCMP (Carnahan-Starling)
+  k1_huang: 0.1666667 # surface-tension knob (1/6=no tension; ~0 gives max tension)
+  k2_huang: 0.0       # second-order sigma parameter
+  kd_huang: -0.083333 # density ratio parameter (-1/12)
+  alpha_meq: 1.0      # meq[1] coefficient (Eq. 5)
+  cs_a: 1.0           # Carnahan-Starling a (plan default)
+  cs_b: 4.0           # Carnahan-Starling b
+  cs_R: 1.0           # Carnahan-Starling R
+  cs_T: 0.9           # reduced temperature T/Tc (paper: 0.9 for Laplace law)
+  cs_G: -1.0          # Carnahan-Starling G (interaction strength)
+  tau_huang: 1.5       # relaxation time τ (paper: τ=1.5)
+  Lambda_huang: 0.083333  # Λ for s_q formula (paper: 1/12)
+  huang_R0: 40.0      # initial droplet radius
+  huang_xc: 128.0     # droplet center x
+  huang_yc: 128.0     # droplet center y
+  huang_W: 3.0        # interface thickness
+  huang_init_mode: 1  # 1=droplet, 2=flat interface
+
 # ── Checkpoint / Restart ─────────────────────────────────────────────────
 checkpoint:
   enable: true    # master on/off switch for checkpoint read/write

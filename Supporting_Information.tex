@@ -1,0 +1,1022 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Supporting Information for:
+% "Pore-Scale Phase Trapping as a Mechanism for a Self-Locking Dissociation
+%  Front in Hydrate-Bearing Sediments"
+% Water Resources Research
+%
+% AGU Supporting Information template -- uses agutexSI2019.cls
+% IMPORTANT: This file is NOT copyedited before publication.
+% All references must also appear in the main manuscript reference list.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[draft,wrr]{agutexSI2019}
+
+\usepackage{graphicx}
+\setkeys{Gin}{draft=false}   % show figures even in draft mode
+\graphicspath{{figures_si/}}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+\usepackage{upgreek}  % provides \upmu for micrometer symbol
+
+\usepackage{booktabs}
+\usepackage{threeparttable}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{makecell}
+\usepackage{array}
+\usepackage{lineno}      % provides linenomath* environment for equations in draft mode
+\usepackage{xcolor}
+% Keep draft double-spacing but suppress draft timestamp in page footer.
+\makeatletter
+\def\@oddfoot{\jfootline}
+\def\@evenfoot{\jfootline}
+\makeatother
+
+% Custom column types for tabularx
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+% Running heads (optional)
+% \authorrunninghead{CHEN AND LI}
+% \titlerunninghead{SUPPORTING INFORMATION}
+
+% Corresponding author
+% \authoraddr{Corresponding author: Shengli Li,
+% College of Construction Engineering, Jilin University,
+% Changchun, 130026, China.(lishengli@jlu.edu.cn)}
+
+\begin{document}
+\raggedbottom\relax
+\pagestyle{headings}
+
+%% -----------------------------------------------------------------------
+%%  TITLE
+%% -----------------------------------------------------------------------
+\title{Supporting Information for ``Pore-Scale Phase Trapping in Hydrate-Bearing
+Sediments: Implications for a Self-Locking Dissociation Front''}
+
+%% -----------------------------------------------------------------------
+%%  AUTHORS AND AFFILIATIONS
+%% -----------------------------------------------------------------------
+\authors{Yuxiang Chen\affil{1,2},
+         Shengli Li\affil{1,2},
+         Haonan Wu\affil{1,2},
+         Qiang Liu\affil{1,2},
+         Shijing Zhang\affil{1,2}}
+
+\affiliation{1}{State Key Laboratory of Deep Earth Exploration and Imaging,
+College of Construction Engineering, Jilin University, Changchun, 130026, China}
+\affiliation{2}{Key Laboratory of Drilling and Exploitation Technology in Complex
+Conditions of Natural Resources, College of Construction Engineering,
+Jilin University, Changchun, 130026, China}
+
+%% -----------------------------------------------------------------------
+%%  BEGIN ARTICLE
+%% -----------------------------------------------------------------------
+\begin{article}
+
+%% -----------------------------------------------------------------------
+%%  CONTENTS OF THIS FILE
+%% -----------------------------------------------------------------------
+\noindent\textbf{Contents of this file}
+\begin{enumerate}
+  \item Text S1: Multi-component pseudopotential lattice Boltzmann method
+  \item Text S2: Model validation
+  \item Text S3: Validation of the trapping criterion
+  \item Text S4: Model Validation and SHAP Attribution Analysis
+  \item Figures S1 to S10
+  \item Tables S1 to S2
+\end{enumerate}
+
+
+%% -----------------------------------------------------------------------
+%%  INTRODUCTION
+%% -----------------------------------------------------------------------
+\noindent\textbf{Introduction}
+
+This Supporting Information provides the full formulations, parameter
+definitions, and implementation details of the multicomponent multi-relaxation-time
+(MRT) pseudopotential lattice Boltzmann (LBM) framework used in the main
+manuscript. It also documents the physical scaling procedure, the trapping
+characterization protocol, the simulation design, and the model validation
+benchmarks (Laplace pressure, contact angle, two-phase Poiseuille flow, and mesh
+independence). Section S3 further details the validation of the trapping criterion
+used to classify trapped clusters, and Section S4 describes the model validation
+protocol and the SHAP attribution analysis framework.
+
+%% ----------------------------------------------------------------------
+%%  TEXT S1 -- MRT-LBM Framework
+%% -----------------------------------------------------------------------
+\noindent\textbf{Text S1.}
+\textbf{Multicomponent Pseudopotential Lattice Boltzmann Framework}
+
+\noindent\textit{S1.1 Governing Evolution Equation}
+
+This study employs a multicomponent pseudopotential lattice Boltzmann framework
+based on the multi-relaxation-time (MRT) formulation to simulate capillary-driven
+gas-water flow in hydrate-bearing porous media. Compared with the conventional
+single-relaxation-time (BGK) scheme, the MRT approach improves numerical stability
+and accuracy under large viscosity and density contrasts, which is critical for
+reproducing realistic interfacial dynamics and capillary phenomena in heterogeneous
+domains.
+
+The evolution of the particle distribution function for each fluid component
+follows the MRT lattice Boltzmann equation:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:mrt-evolution}
+f_{k,\alpha}(\mathbf{x}+\mathbf{e}_{\alpha}\delta_t,\, t+\delta_t)
+=
+f_{k,\alpha}(\mathbf{x},t)
+-
+\bar{\Lambda}_{\alpha\beta}
+\left(
+f_{k,\beta}-f_{k,\beta}^{\mathrm{eq}}
+\right)\big|_{(\mathbf{x},t)}
++
+\delta_t\, F'_{k,\alpha}\big|_{(\mathbf{x},t)} \, .
+\end{equation}
+\end{linenomath*}
+where $f_{\alpha}$ is the density distribution function (DF),
+$f_{\alpha}^{\mathrm{eq}}$ represents the equilibrium DF,
+$F'_{\alpha}$ denotes the external pseudopotential force,
+$\mathbf{e}_{\alpha}$ are the discrete velocities:
+
+\begin{linenomath*}
+\begin{equation}
+\label{eq:discrete-velocities}
+\mathbf{e}_{\alpha} = \begin{cases}
+(0,0) & \alpha=0 \\[1.5ex] % 这里增加了 1.5ex 的额外垂直间距
+c\left(\cos \left[\frac{(\alpha-1) \pi}{2}\right], \sin \left[\frac{(\alpha-1) \pi}{2}\right]\right) & \alpha=1 \sim 4 \\[1.5ex]
+\sqrt{2} c\left(\cos \left[\frac{(2 \alpha-9) \pi}{4}\right], \sin \left[\frac{(2 \alpha-9) \pi}{4}\right]\right) & \alpha=5 \sim 8
+\end{cases}
+\end{equation}
+\end{linenomath*}
+The spatial and temporal steps $\delta_x$ and $\delta_t$
+are both set to unity. The two-dimensional nine-velocity (D2Q9) lattice model
+is adopted, with lattice constant $c = \delta_x/\delta_t$ and sound speed
+$c_s = c/\sqrt{3}$.
+$\Lambda_{\alpha\beta} = {M}^{-1}{\Lambda}{M}$ is the collision matrix
+constructed from the moment-space transform $M$ and the diagonal relaxation
+matrix $\Lambda$. The matrices $M$ and $\Lambda$ are defined as~\cite{lallemand_theory_2000}:
+
+\begin{linenomath*}
+\begin{equation}
+\label{eq:transform-matrix}
+\mathbf{M} = \begin{bmatrix}
+1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\
+-4 & -1 & -1 & -1 & -1 & 2 & 2 & 2 & 2 \\
+4 & -2 & -2 & -2 & -2 & 1 & 1 & 1 & 1 \\
+0 & 1 & 0 & -1 & 0 & 1 & -1 & -1 & 1 \\
+0 & -2 & 0 & 2 & 0 & 1 & -1 & -1 & 1 \\
+0 & 0 & 1 & 0 & -1 & 1 & 1 & -1 & -1 \\
+0 & 0 & -2 & 0 & 2 & 1 & 1 & -1 & -1 \\
+0 & 1 & -1 & 1 & -1 & 0 & 0 & 0 & 0 \\
+0 & 0 & 0 & 0 & 0 & 1 & -1 & 1 & -1
+\end{bmatrix}
+\end{equation}
+\end{linenomath*}
+
+\begin{linenomath*}
+\begin{equation}
+\label{eq:relaxation-matrix}
+\Lambda = \mathrm{diag} \left( \tau_{\rho}^{-1}, \tau_{e}^{-1}, \tau_{\zeta}^{-1}, \tau_{j}^{-1}, \tau_{q}^{-1}, \tau_{j}^{-1}, \tau_{q}^{-1}, \tau_{v}^{-1}, \tau_{v}^{-1} \right)
+\end{equation}
+\end{linenomath*}
+$\tau_{v}$ and $\tau_{e}$ determine the kinematic viscosity and bulk viscosity, respectively,
+with $\nu = c_{s}^{2}(\tau_{v}-0.5)$ and $\zeta = c_{s}^{2}(\tau_{e}-0.5)$.
+The specific values related to $\Lambda$ are specified as follows~\cite{hou_multi_2018}:
+$\tau_{\rho}^{-1} = \tau_{j}^{-1} = 1$;
+$\tau_{e}^{-1} = \tau_{\zeta}^{-1} = 0.8$; and $\tau_{q}^{-1} = 1.1$.
+
+
+
+Using the transformation matrix $M$, both $f$ and $f^{\mathrm{eq}}$ are
+projected into the moment space through $m = Mf$ and $m^{\mathrm{eq}} = Mf^{\mathrm{eq}}$.
+The right-hand side of equation~\eqref{eq:mrt-evolution} can then be rewritten as:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:mrt-moment-update}
+\mathbf{m}^{*}=\mathbf{m}-\bm{\Lambda}\left(\mathbf{m} - \mathbf{m}^{\mathrm{eq}}\right)
++ \delta_t\left(\mathbf{I} - \frac{\bm{\Lambda}}{2}\right)\bar{\mathbf{S}}+\delta_t\,\mathbf{C} \, .
+\end{equation}
+\end{linenomath*}
+In equation~\eqref{eq:mrt-moment-update}, the collision operator acts in moment
+space, where the diagonal relaxation matrix $\Lambda$ assigns independent
+relaxation rates to individual kinetic moments. This freedom allows non-conserved
+higher-order moments to relax more rapidly, suppressing spurious velocities and
+improving numerical stability under strong density and viscosity contrasts.
+
+The macroscopic density $\rho_k$ and velocity $\mathbf{u}$ are defined as:
+\begin{linenomath*}
+\begin{equation}
+\rho_k = \sum_{\alpha} f_{k,\alpha},
+\qquad
+\mathbf{u}
+=
+\frac{
+\sum_{k}
+\left(
+\sum_{\alpha}
+\mathbf{e}_{\alpha} f_{k,\alpha}
++
+\frac{\delta_t}{2}\mathbf{F}_k
+\right)
+}{
+\sum_{k} \rho_k
+}
+\end{equation}
+\end{linenomath*}
+where $\mathbf{F}_{k} = \mathbf{F}_{k,m} + \mathbf{F}_{k,\text{ads}} + \mathbf{F}_{b}$
+is the total force on component $k$, including fluid--fluid intermolecular force,
+fluid--solid interaction force, and the imposed body force.
+
+A uniform body force $\mathbf{F}_b = \rho_k \mathbf{g}$ is applied along the
+flow direction to drive gas--water displacement~\cite{ji_relative_2022}, where $g$ denotes the forcing
+intensity. This forcing mimics pressure-gradient conditions under depressurization
+and provides a controlled means of probing capillary-viscous competition.
+
+\noindent\textit{S1.2 Interfacial Interactions and Phase Separation}
+
+The multicomponent pseudopotential formulation governs the capillary forces that
+drive phase segregation between water and methane~\cite{chen_critical_2014}.
+In this model, the fluid-fluid interaction acting on component $k$ combines an
+intra-component term $\mathbf{F}_k^{\mathrm{intra}}$ and an inter-component term
+$\mathbf{F}_k^{\mathrm{inter}}$:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:force_total}
+\mathbf{F}_{k,m}(\mathbf{x})
+=
+\mathbf{F}_k^{\mathrm{intra}}(\mathbf{x})
++
+\mathbf{F}_k^{\mathrm{inter}}(\mathbf{x}) .
+\end{equation}
+\end{linenomath*}
+
+\begin{linenomath*}
+\begin{equation}
+\label{eq:force_intra}
+\mathbf{F}_k^{\mathrm{intra}}(\mathbf{x})
+=
+-
+G_{kk}
+\,
+\psi_k(\mathbf{x})
+\sum_{\alpha}
+w(|\mathbf{e}_\alpha|^2)
+\,
+\psi_k(\mathbf{x}+\mathbf{e}_\alpha)
+\,
+\mathbf{e}_\alpha .
+\end{equation}
+\end{linenomath*}
+
+\begin{linenomath*}
+\begin{equation}
+\label{eq:force_inter}
+\mathbf{F}_k^{\mathrm{inter}}(\mathbf{x})
+=
+-
+G_{k\bar{k}}
+\,
+\phi_k(\mathbf{x})
+\sum_{\alpha}
+w_\alpha
+\,
+\phi_{\bar{k}}(\mathbf{x}+\mathbf{e}_\alpha)
+\,
+\mathbf{e}_\alpha .
+\end{equation}
+\end{linenomath*}
+Here $G_{kk}$ and $G_{k\bar{k}}$ denote the interaction strengths between the
+same and different components, respectively. In this work, water (component 1)
+and methane (component 2) interact through a tunable coupling strength $G_{12}$,
+which controls gas--water phase separation. The weight coefficients $w_\alpha$
+equal $4/9$ (rest), $1/9$ (face), and $1/36$ (diagonal) in the D2Q9 model.
+Different from the pseudopotential  $\psi_k(\mathbf{x})$ in equation~\eqref{eq:force_intra},
+an empirical density-based pseudopotential $\phi_k(\mathbf{x})$ is employed
+in equation~\eqref{eq:force_inter} to ensure a proper component distribution~\cite{zheng_single_2019}.
+
+To represent the strong equation-of-state nonlinearity of water, a
+PR-EOS-based pseudopotential $\psi_1(\mathbf{x})$ is employed~\cite{he_thermodynamic_xxxx,yuan_equations_2006}:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:psi_water}
+\psi_1(\mathbf{x})
+=
+\sqrt{
+\frac{
+2\left(
+p_{k,\mathrm{EOS}}
+-
+\rho_1 c_s^2
+\right)
+}{
+c^2 G_{11}
+}
+} .
+\end{equation}
+\end{linenomath*}
+The Peng--Robinson equation~\cite{yuan_equations_2006} of state determines the local pressure $p_{k,\mathrm{EOS}}$:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:pr_eos}
+p_{k,\mathrm{EOS}}
+=
+\frac{\rho_1 R T}{1 - b\rho_1}
+-
+\frac{a\,\alpha(T)\,\rho_1^2}{1 + 2b\rho_1 - b^2\rho_1^2}
+\end{equation}
+\end{linenomath*}
+
+\begin{linenomath*}
+\begin{equation}
+\label{eq:phi-T}
+\alpha(T) = \left[ 1 + (0.37464 + 1.54226\omega - 0.26992\omega^2) (1 - \sqrt{T/T_c}) \right]^2
+\end{equation}
+\end{linenomath*}
+where $\omega = 0.344$, $a = 0.45724 \frac{R^2 T_c^2}{P_c}$, $b = 0.0778 \frac{R T_c}{P_c}$, $T_c$, $P_c$ are the
+critical temperature and pressure, respectively.
+In this work, the parameters are specified as $a = 1/49$, $b = 2/21$, and $R = 1$.
+
+Methane is treated using an empirical density-based pseudopotential~\cite{xin_effect_2021}:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:psi_methane}
+\psi_2(\mathbf{x})
+=
+\rho_0
+\left[
+1
+-
+\exp
+\left(
+-
+\frac{\rho_2(\mathbf{x})}{\rho_0}
+\right)
+\right]
+\end{equation}
+\end{linenomath*}
+where $\rho_0 = 1$ is a constant coefficient. This asymmetric treatment allows
+water to retain a realistic capillary response while keeping methane numerically
+tractable under large density ratios.
+
+\noindent\textit{S1.3 Improved Forcing Scheme}
+
+Under large density contrasts, standard forcing schemes introduce spurious
+pressure shifts. To maintain thermodynamic consistency and suppress unphysical
+currents along curved interfaces, we adopt the improved forcing scheme proposed
+by \citeA{li_lattice_2013}, in which the force term is projected into moment
+space and scaled by a parameter $\sigma$:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:moment_force}
+\bar{\mathbf{S}}
+=
+\begin{bmatrix}
+0 \\
+6\left(u_x F_{k,x} + u_y F_{k,y}\right)
++
+\displaystyle
+\frac{
+12\sigma
+\left|\mathbf{F}_{k,m}\right|^2
+}{
+\psi^2 \Delta t \left(\tau_e - 0.5\right)
+}
+\\[18pt]
+-6\left(u_x F_{k,x} + u_y F_{k,y}\right)
+-
+\displaystyle
+\frac{
+12\sigma
+\left|\mathbf{F}_{k,m}\right|^2
+}{
+\psi^2 \Delta t \left(\tau_s - 0.5\right)
+}
+\\[18pt]
+F_{k,x} \\
+- F_{k,x} \\
+F_{k,y} \\
+- F_{k,y} \\
+2\left(u_x F_{k,x} - u_y F_{k,y}\right) \\
+u_x F_{k,y} + u_y F_{k,x}
+\end{bmatrix} .
+\end{equation}
+\end{linenomath*}
+The parameter $\sigma$ is tuned to achieve thermodynamic consistency; for water,
+$\sigma = 0.11$ follows \citeA{hou_multi_2018}, while for methane $\sigma = 0$.
+
+\noindent\textit{S1.4 Wettability Representation}
+
+Wall wettability is represented by a fluid-solid interaction force
+$\mathbf{F}_{k,\mathrm{ads}}$, which prescribes the contact angle between
+fluids and solid surfaces. A modified pseudopotential approach~\cite{yang_improved_2021}
+is adopted to impose a broad range of contact angles while maintaining stable
+interfacial representation:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:force_wettability}
+\mathbf{F}_{k,\mathrm{ads}}(\mathbf{x})
+=
+-
+G_{k,\mathrm{ads}}
+\,
+\psi_k(\mathbf{x})
+\sum_i
+w\!\left(|\mathbf{e}_i|^2\right)
+\,
+\psi(\mathbf{x})
+\,
+s(\mathbf{x}+\mathbf{e}_i \Delta t)
+\,
+\mathbf{e}_i .
+\end{equation}
+\end{linenomath*}
+Here $G_{k,\mathrm{ads}}$ is the adhesive coefficient used to tune wettability,
+and the switch function $s(\mathbf{x})$ equals 1 at solid nodes and 0 at fluid
+nodes. A ghost layer near the solid boundary is employed, with its density
+estimated from neighboring fluid nodes~\cite{yang_improved_2021,li_implementation_2019}.
+ \begin{linenomath*}
+\begin{equation}
+\label{eq:average-density}
+\rho_{\mathrm{ave}}(\mathbf{x}) = \frac{\displaystyle \sum_{\alpha}
+w(|\mathbf{e}_{\alpha}|^2) \rho(\mathbf{x} + \mathbf{e}_{\alpha} \delta_t)
+[1 - s(\mathbf{x} + \mathbf{e}_{\alpha})]} {\displaystyle \sum_{\alpha}
+w(|\mathbf{e}_{\alpha}|^2) [1 - s(\mathbf{x} + \mathbf{e}_{\alpha})]}
+\end{equation}
+\end{linenomath*}
+The adhesive coefficient $G_{k,\mathrm{ads}}$
+maps directly and linearly to the static contact angle $\theta$, as confirmed by
+the contact angle benchmark (Figure~S2).
+
+
+\noindent\textit{S1.5 Surface Tension Control}
+
+In the original pseudopotential model, surface tension is intrinsically coupled
+with other fluid properties and cannot be tuned independently. To introduce
+explicit control over capillarity, an additional source term $\mathbf{C}$ is
+incorporated following \citeA{li_achieving_2013}, allowing the interfacial force
+to be adjusted without affecting bulk thermodynamic behavior:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:surface_tension_source}
+\mathbf{C}
+=
+\left[
+\renewcommand{\arraystretch}{1.6}
+\begin{array}{c}
+\makebox[3cm]{0} \\
+1.5\,\tau_e^{-1}\left(Q_{xx}+Q_{yy}\right) \\
+-1.5\,\tau_s^{-1}\left(Q_{xx}+Q_{yy}\right) \\
+0 \\
+0 \\
+0 \\
+0 \\
+-\tau_v^{-1}\left(Q_{xx}-Q_{yy}\right) \\
+-\tau_v^{-1} Q_{xy}
+\end{array}
+\right] .
+\end{equation}
+\end{linenomath*}
+The variables $Q_{xx}$, $Q_{yy}$, and $Q_{xy}$ are obtained from the tensor
+$\mathbf{Q}$:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:Q_tensor}
+\mathbf{Q}
+=
+\kappa
+\,
+\frac{G_{11}}{2}
+\,
+\psi_1(\mathbf{x})
+\sum_{\alpha}
+w\!\left(|\mathbf{e}_{\alpha}|^2\right)
+\left[
+\psi_1(\mathbf{x}+\mathbf{e}_{\alpha})
+-
+\psi_1(\mathbf{x})
+\right]
+\,
+\mathbf{e}_{\alpha}\mathbf{e}_{\alpha} .
+\end{equation}
+\end{linenomath*}
+The parameter $\kappa \in [0,1]$ enables independent adjustment of the surface
+tension over a broad range.
+The system pressure for the multi-component LB model can be calculated by:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:system-pressure}
+p = c_{s}^{2} \sum_{k} \rho_{k} + 0.5 c^{2} \sum_{k} G_{kk}
+\psi_{k}^{2} + 0.5 c^{2} \sum_{k \neq \bar{k}} G_{k\bar{k}} \phi_k \phi_{\bar{k}}
+\end{equation}
+\end{linenomath*}
+%% -----------------------------------------------------------------------
+%%  TEXT S2 -- Physical Scaling and Simulation Parameters
+%% -----------------------------------------------------------------------
+\noindent\textbf{Text S2.}
+\textbf{Model Validation Benchmarks}
+
+The MRT-based pseudopotential model was validated through four standard
+benchmarks to confirm its ability to reproduce interfacial tension, wettability
+control, phase-mobility partitioning, and spatial resolution sufficiency.
+
+\noindent\textit{S2.1 Laplace Pressure Test}
+
+A droplet with various initial radii $R$ was placed at the center of a
+$300 \times 300$ lattice domain with periodic boundaries. The simulation temperature
+was set to $0.85\,T_c$ and the surface tension was tuned via $\kappa$ to match
+target values for each equilibrium state. Figure~S1 shows the linear dependence of
+the pressure difference $\Delta P$ on $1/R$ for both equilibrium states, consistent
+with the Laplace relation $\Delta P = \sigma / R$. The strong linearity
+($R^2 \approx 0.99$) confirms that the model accurately reproduces the Laplace law.
+
+\noindent\textit{S2.2 Contact Angle Test}
+
+The wettability boundary condition was validated by simulating a droplet resting on
+a flat solid surface within a $300 \times 100$ lattice domain. Bounce-back and
+wettability boundary conditions were applied at the bottom wall and periodic
+boundaries elsewhere. A droplet of radius 30 lattice units was allowed to relax to
+its equilibrium configuration. Figure~S2 illustrates the equilibrium droplets under
+both equilibrium states for various $G_{k,\mathrm{ads}}$ values. A clear linear
+relationship between the resulting contact angle $\theta$ and $G_{k,\mathrm{ads}}$
+confirms that the adhesive coefficient can be directly mapped to the static contact
+angle.
+
+\noindent\textit{S2.3 Two-Dimensional Two-Phase Poiseuille Flow}
+
+To further validate the two-phase flow model, a two-dimensional Poiseuille flow of
+immiscible fluids in a channel was simulated and compared with the analytical
+solution derived from the Navier--Stokes equations. The flow configuration and
+phase distribution are illustrated in Figure~S3, which schematically shows the
+wetting and non-wetting regions and the coordinate system adopted in the analysis.
+The analytical solution for the velocity profile is expressed as:
+\begin{linenomath*}
+\begin{equation}
+u_x(y)=
+\begin{cases}
+A_{\mathrm{nw}}y^2 + C_{\mathrm{nw}}, & |y|\le a \\
+A_{\mathrm{w}}y^2 + B_{\mathrm{w}}y + C_{\mathrm{w}}, & a \le |y|\le b
+\end{cases}
+\label{eq:poiseuille_velocity_profile}
+\end{equation}
+\end{linenomath*}
+where
+\begin{linenomath*}
+\begin{equation}
+A_{\mathrm{nw}}=\frac{F_b}{\mu_{\mathrm{nw}}},\quad
+A_{\mathrm{w}}=\frac{F_b}{\mu_{\mathrm{w}}},\quad
+B_{\mathrm{w}}=-2A_{\mathrm{w}}a+2MA_{\mathrm{nw}}a,
+\label{eq:poiseuille_coeff_1}
+\end{equation}
+\end{linenomath*}
+\begin{linenomath*}
+\begin{equation}
+C_{\mathrm{nw}}=(A_{\mathrm{w}}-A_{\mathrm{nw}})a^2-B_{\mathrm{w}}(b-a)-A_{\mathrm{w}}b^2,\quad
+C_{\mathrm{w}}=-A_{\mathrm{w}}b^2-B_{\mathrm{w}}b.
+\label{eq:poiseuille_coeff_2}
+\end{equation}
+\end{linenomath*}
+Here $F_b$ is the uniform body force applied along the $x$-direction, $a$ and
+$b$ denote the half-widths of the non-wetting and wetting regions,
+$\mu_{\mathrm{nw}}$ and $\mu_{\mathrm{w}}$ are the dynamic viscosities of the
+non-wetting and wetting fluids, respectively, and
+$M=\mu_{\mathrm{nw}}/\mu_{\mathrm{w}}$ is the viscosity ratio.
+
+From the analytical velocity profile, $M$ and the phase saturations jointly
+determine the flow resistance and permeability partition between phases. The
+analytical relative permeabilities for wetting and non-wetting phases~\cite{liang_analytical_2018} are:
+\begin{linenomath*}
+\begin{equation}
+k_{r,w}=\frac{1}{2}S_w^2(3-S_w)
+\label{eq:poiseuille_krw}
+\end{equation}
+\end{linenomath*}
+\begin{linenomath*}
+\begin{equation}
+k_{r,\mathrm{nw}}=S_{\mathrm{nw}}\left[\frac{3}{2}M+S_{\mathrm{nw}}^2\left(1-\frac{3}{2}M\right)\right]
+\label{eq:poiseuille_krnw}
+\end{equation}
+\end{linenomath*}
+where $S_w$ and $S_{\mathrm{nw}}=1-S_w$ are the saturations of the wetting and
+non-wetting phases, respectively.
+
+To reproduce this flow configuration numerically, a $300\times200$ lattice
+domain was employed with no-slip boundaries at the top and bottom and periodic
+boundaries at the lateral sides. The co-current two-phase flow was driven by a
+uniform body force ($F_b = 5 \times 10^{-9}$). Figure~S4 presents the validation
+results for two equilibrium states (Eq1 and Eq2), showing the comparison between
+LBM simulations and analytical solutions for both gas and water phases. The
+simulated relative permeabilities show excellent agreement with the analytical
+predictions ($R^2 \approx 0.99$), confirming the robustness and reliability of the
+proposed model.
+
+\noindent\textit{S2.4 Mesh Independence Study}
+
+To verify the reliability of the numerical model and determine an appropriate
+spatial resolution, a mesh-independence assessment was conducted based on the
+Poiseuille-flow benchmark described in Section~S2.3. Four nested uniform grids
+with $N_Y=100$, $200$, $400$, and $800$ were evaluated. During the tests, the
+external driving force was adjusted to maintain a constant flow rate and thus a
+consistent Reynolds number across all grid configurations.
+
+The relative error between the numerically predicted flow rate and the
+analytical solution is defined as:
+\begin{linenomath*}
+\begin{equation}
+\varepsilon=
+\left|
+\frac{Q_{\mathrm{Numerical}}-Q_{\mathrm{Analytical}}}{Q_{\mathrm{Analytical}}}
+\right|
+\label{eq:mesh_relative_error}
+\end{equation}
+\end{linenomath*}
+
+As illustrated in Figure~S5, the relative flow-rate errors for all mesh scales
+are strictly confined within 1.5\%. The error exhibits a clear downward trend
+as the mesh resolution increases ($\Delta x$ decreases): the relative errors for
+$N_Y=100$, $200$, $400$, and $800$ are 1.2995\%, 1.2165\%, 0.8230\%, and
+0.7380\%, respectively. Considering the balance between computational accuracy
+and cost, the range $N_Y=200$--$400$ is selected as the production grid for
+this study.
+
+
+%% -----------------------------------------------------------------------
+%%  TEXT S3 -- Trapping Characterization and Trapping Criterion Validation
+%% -----------------------------------------------------------------------
+\noindent\textbf{Text S3.}
+\textbf{Validation of the trapping criterion}
+
+Detailed extraction and connectivity procedures are provided in the main text.
+Here we retain only the trapping-classification criterion used in the validation.
+A cluster was classified as trapped when its transport activity fell below a
+capillary threshold:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:locking_criterion}
+\overline{U}_x^{(k)}
+\le
+C_a^{*}\,
+\frac{\sigma}{\mu_{\phi}}
+\end{equation}
+\end{linenomath*}
+where $C_a^{*}$ is a critical capillary number, $\sigma$ denotes the gas--water
+interfacial tension, and $\mu_{\phi}$ is the viscosity of the corresponding fluid
+phase. This criterion encapsulates the regime where viscous driving forces are
+insufficient to overcome interfacial energy barriers, resulting in negligible net
+transport within the cluster.
+
+We performed a two-parameter scan around the calibrated trapping criterion
+(phase A = water, phase B = gas),
+including the base threshold $C_{a,A}^{*}$ and the phase-B scaling factor
+$\lambda_B$ (i.e., $C_{a,B}^{*}=\lambda_B C_{a,A}^{*}$). For each parameter pair,
+the phase trapping indices from all simulations were recalculated and compared
+with the corresponding relative permeabilities.
+
+Consistency was evaluated primarily using Spearman correlation. Let $\eta_A$
+and $\eta_B$ denote the phase trapping indices, and
+$k_{rw}$ and $k_{rg}$ denote water and gas relative permeabilities, respectively.
+The Spearman function is:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:spearman_def}
+\rho_s(X,Y)
+=
+\rho_p\!\left(\mathrm{rank}(X),\,\mathrm{rank}(Y)\right)
+=
+1-\frac{6\sum_{i=1}^{n} d_i^2}{n\left(n^2-1\right)}
+\end{equation}
+\end{linenomath*}
+where $d_i$ is the rank difference between paired samples (for tie-free data).
+Physically, $\rho_s$ measures monotonic coupling between trapping state and
+hydraulic conductance.
+
+The scan diagnostics are:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:scan_corr_A}
+S_A = \left|\rho_s\!\left(\eta_A,\,k_{rw}\right)\right|,
+\qquad
+S_B = \left|\rho_s\!\left(\eta_B,\,k_{rg}\right)\right|
+\end{equation}
+\end{linenomath*}
+where $\rho_s(\cdot)$ is the Spearman rank correlation coefficient. Pearson
+coefficients were reported in parallel only as secondary linear-consistency
+checks and were not used as the scan objective.
+To avoid selecting a parameter set that performs well for only one phase,
+we used a balanced score:
+\begin{linenomath*}
+\begin{equation}
+\label{eq:scan_hmean_score}
+S_{\mathrm{bal}}
+=
+\frac{2S_A S_B}{S_A+S_B}
+\end{equation}
+\end{linenomath*}
+which penalizes one-sided performance.
+
+Figure~S6 summarizes the parameter-scan map. High-score regions are concentrated
+in a narrow neighborhood of the adopted parameter set, and the optimum is stable
+across adjacent grid points. The unscaled criterion shows an inter-phase mismatch:
+the parameter region maximizing phase-A consistency does not fully coincide with
+that of phase B. Introducing the phase-B scaling parameter $\lambda_B$ reduces
+this mismatch and yields a robust two-phase optimum, suggesting that the effective
+trapping threshold is not strictly symmetric between gas and water.
+
+To further verify the selected optimum, Figure~S7 reports direct pointwise
+correlations between trapping index and relative permeability at
+$C_a^* = 1.8 \times 10^{-3}$ and $\lambda_B = 2.333$ for $n=130$ samples
+(pore-filling morphology, and grain-coating morphology,combined). Both phases exhibit the expected negative
+direction ($\eta \uparrow \Rightarrow k_r \downarrow$): for phase A,
+$\rho_s=-0.960$ and $r=-0.741$; for phase B, $\rho_s=-0.820$ and $r=-0.527$.
+The weaker linear correlation in phase B, compared with its still-strong rank
+correlation, is consistent with a threshold-like mobility collapse. Given the
+strongly nonlinear and jump-like mobility response of the gas phase, Spearman
+rank correlation provides a more objective measure of the physical association
+between $\eta$ and $k_r$ than Pearson correlation. Taken together,
+Figures~S6 and~S7 demonstrate that $\eta$ provides a robust physical proxy for
+phase mobility loss in hydrate-bearing sediments.
+The trapping criterion calibrated on the 130-case subset
+was applied uniformly to the full 220-case
+SHAP ensemble; consistency was verified.
+
+%% -----------------------------------------------------------------------
+%%  TEXT S4 -- Simulation Design and SHAP Analysis Strategy
+%% -----------------------------------------------------------------------
+\noindent\textbf{Text S4.}
+\textbf{Model Validation and SHAP Attribution Analysis}
+
+XGBoost models are trained to predict phase trapping indicators.
+After retaining $n=180$ samples with $S_w\in(0,1)$, each target variable
+is evaluated using a 90\%/10\% train/holdout split, where the holdout
+subset is set aside before any model fitting or selection.
+
+Two strategies are compared: a baseline XGBoost with fixed hyperparameters
+and a tuned XGBoost whose hyperparameters are optimized on the training
+subset via RandomizedSearchCV\@. For each strategy, 5-fold cross-validation
+is performed on the training subset, and the final model is retrained on
+all training data and assessed on the holdout subset.
+Metrics are the coefficient of determination $R^2$ and mean absolute
+error (MAE).
+
+Cross-validation fold results are reported in Figure~S8, and holdout
+parity plots in Figure~S9. For the water-phase indicator, the baseline
+XGBoost is adopted as the final model (holdout $R^2=0.914$,
+MAE$\approx 0.085$; cross-validation mean $\overline{R^2}=0.6927\pm0.1066$).
+For the gas-phase indicator, the tuned XGBoost is selected (holdout
+$R^2=0.755$, MAE$\approx 0.152$; cross-validation mean
+$\overline{R^2}=0.5963\pm0.0623$).
+
+This protocol reduces potential data leakage and model-selection bias,
+though the limited sample size and moderate cross-validation variability
+indicate that the predictive uncertainty is non-negligible.
+The validated models are used in the main-text SHAP attribution analysis,
+where feature contributions to the water- and gas-phase trapping indicators
+are quantified to identify the dominant controlling factors.
+Future work could strengthen the analysis by incorporating larger
+simulation ensembles, extending feature sets with additional geometric
+descriptors, and adopting model-agnostic importance measures to
+complement the SHAP attribution framework.
+
+%% -----------------------------------------------------------------------
+%%  REFERENCES
+%% -----------------------------------------------------------------------
+% NOTE: All references listed here must also appear in the main manuscript.
+% Use only \cite and \citeA for citations in AGU SI documents.
+% \cite for parenthetical: ...as shown in recent studies \cite{lallemand_theory_2000}
+% \citeA for in-text:       \citeA{lallemand_theory_2000} have shown...
+
+\bibliography{reference_si}
+
+\end{article}
+\clearpage
+
+%% -----------------------------------------------------------------------
+%%  FIGURES  (must appear after \end{article})
+%% -----------------------------------------------------------------------
+
+% Figure S1 -- Laplace pressure test (linear DeltaP vs 1/R)
+
+\begin{figure}
+\setfigurenum{S1}
+\centering
+\includegraphics[width=0.6\textwidth]{fig1_laplace_eq1.pdf}\\[-0.2em]
+{\ (a) Eq1}\\[0.8em]
+\includegraphics[width=0.6\textwidth]{fig1_laplace_eq2.pdf}\\[-0.2em]
+{\ (b) Eq2}
+\caption{Laplace pressure test. Linear fits
+($R^2 \approx 1$) confirm that the model reproduces the Laplace relation
+$\Delta P = \sigma/R$ and yields reliable estimates of interfacial tension.
+Eq1 and Eq2 denote the two thermodynamic equilibrium states listed in Table~S1.}\label{fig:S1_laplace_eq1}
+\end{figure}
+
+% Figure S2 -- Contact angle vs adhesive coefficient
+\begin{figure}
+\setfigurenum{S2}
+\centering
+\includegraphics[width=0.6\textwidth]{fig2_contact_angle_eq1.pdf}\\[-0.2em]
+{\ (a) Eq1}\\[0.8em]
+\includegraphics[width=0.6\textwidth]{fig2_contact_angle_eq2.pdf}\\[-0.2em]
+{\ (b) Eq2}
+\caption{Contact angle validation. Equilibrium droplet configurations under both
+equilibrium states (Eq1 and Eq2) for varying adhesive coefficients $G_{k,\mathrm{ads}}$.
+A linear relationship between $G_{k,\mathrm{ads}}$ and the resulting static contact
+angle $\theta$ is observed, confirming that the adhesive coefficient directly controls
+surface wettability. Eq1 and Eq2 denote the two thermodynamic equilibrium states
+listed in Table~S1.}\label{fig:S2_contact_angle}
+\end{figure}
+
+
+
+
+
+% Figure S3 -- Schematic of two-dimensional two-phase Poiseuille flow
+\begin{figure}
+\setfigurenum{S3}
+\centering
+\includegraphics[width=0.92\textwidth,trim=5cm 6cm 5cm 6cm,clip]{fig3_two_phase_flow.pdf}
+\caption{Schematic of the two-dimensional two-phase Poiseuille flow.
+Wetting and non-wetting regions, interface positions ($\pm a$), and channel
+half-width ($\pm b$) are indicated together with the flow direction and
+coordinate system used in the analytical derivation.}\label{fig:S3_poiseuille_schematic}
+\end{figure}
+
+% Figure S4 -- Two-phase Poiseuille flow relative-permeability validation
+\begin{figure}
+\setfigurenum{S4}
+\centering
+\includegraphics[width=0.6\textwidth]{fig4_relperm_eq1.pdf}\\[-0.2em]
+{\ (a) Eq1}\\[0.8em]
+\includegraphics[width=0.6\textwidth]{fig4_relperm_eq2.pdf}\\[-0.2em]
+{\ (b) Eq2}
+\caption{Two-dimensional two-phase Poiseuille flow validation. Simulated
+relative permeabilities for wetting and non-wetting phases agree with the
+analytical solutions in both equilibrium states ($R^2 \approx 1$). Eq1 and Eq2
+denote the two thermodynamic equilibrium states listed in Table~S1.}\label{fig:S4_relperm}
+\end{figure}
+
+% Figure S5 -- Mesh independence validation
+\begin{figure}
+\setfigurenum{S5}
+\centering
+\includegraphics[width=0.72\textwidth]{fig5_mesh_convergence.pdf}
+\caption{Mesh-independence validation based on  Poiseuille-flow
+benchmarks. Relative flow-rate error decreases with increasing resolution
+($N_Y=100, 200, 400, 800$), and remains below 1.5\% for all tested grids,
+supporting the choice of $N_Y=200$--$400$ for production simulations.}\label{fig:S5_mesh_convergence}
+\end{figure}
+
+
+\begin{figure}
+\setfigurenum{S6}
+\centering
+\includegraphics[width=0.95\textwidth]{fig6_trapping_validation.pdf}
+\caption{Parameter-scan validation of trapping-index consistency with relative permeability.
+Each panel reports the absolute Spearman correlation for one phase and the
+harmonic-mean balanced score, as functions of $C_{a,A}^{*}$ and $\lambda_B$.
+The concentration of high-score regions around the selected parameter set
+demonstrates robust two-phase consistency and supports the adopted calibration.}\label{fig:S6_trapping_validation}
+\end{figure}
+
+\begin{figure}
+\setfigurenum{S7}
+\centering
+\includegraphics[width=0.95\textwidth]{fig7_eta_vs_kr_scatter.pdf}
+\caption{{Correlation between phase-trapping metric $\eta$ and relative permeability $k_r$
+for (a) water phase and (b) gas phase.} Dots and squares represent Morph-1 and Morph-2
+results, respectively. The black dashed line indicates the linear regression with a
+95\% confidence interval (shaded area). Statistical metrics including Pearson $r$,
+Spearman $\rho$, and sample size $n$ are provided in the legends.}\label{fig:S7_trapping_validation}
+\end{figure}
+
+
+
+\begin{figure}
+\setfigurenum{S8}
+\centering
+\includegraphics[width=0.6\textwidth]{fig8_K_validation_gas.pdf}\\[-0.2em]
+{\ (a)  Cross-Validation for Gas Phase}\\[0.8em]
+\includegraphics[width=0.6\textwidth]{fig8_K_validation_water.pdf}\\[-0.2em]
+{\ (b) Cross-Validation for Water Phase}
+\caption{Five-fold outer-cross-validation results for XGBoost models
+predicting phase trapping indicators.}\label{fig:S8_cross_validation}
+\end{figure}
+
+
+\begin{figure}
+\setfigurenum{S9}
+\centering
+\includegraphics[width=0.49\textwidth]{fig9_validation_gas_parity.pdf}
+\hfill
+\includegraphics[width=0.49\textwidth]{fig9_validation_water_parity.pdf}\\[-0.2em]
+{\ (a) Gas-phase indicator (tuned XGBoost)
+\hspace{1.5em}
+(b) Water-phase indicator (baseline XGBoost)}
+\caption{Holdout parity plots of selected XGBoost models for phase trapping indicators.
+Markers show predicted versus observed values on the independent holdout subset,
+and the dashed diagonal denotes the 1:1 agreement line.}\label{fig:S9_holdout_parity}
+\end{figure}
+
+
+
+\begin{figure}
+\setfigurenum{S10}
+\centering
+\includegraphics[width=0.5\textwidth]{fig10_eq_effect_bars.pdf}\\[-0.2em]
+{\ (a) Pairwise SHAP comparison by equilibrium state (Eq1 vs Eq2)}\\[0.2em]
+\includegraphics[width=0.5\textwidth]{fig10_morph_effect_bars.pdf}\\[-0.2em]
+{\ (b) Pairwise SHAP comparison by pore morphology (Morph-1 vs Morph-2)}
+\includegraphics[width=0.5\textwidth]{fig10_shap_gx_grouped_bars.pdf}\\[-0.2em]
+{\ (c) Pairwise SHAP comparison by forcing factor ($G_x$ groups)}
+\caption{Supplementary pairwise SHAP comparisons for phase trapping indicators.
+Panels (a)--(c) compare phase-wise SHAP responses across equilibrium state,
+pore morphology, and forcing factor groupings, respectively. These plots
+complement the main-text phase-wise SHAP response curves by showing additional
+grouped contrasts beyond the four highlighted indicators.}\label{fig:S10_shap_pairwise}
+\end{figure}
+
+
+
+
+%% -----------------------------------------------------------------------
+%%  TABLES  (may appear after \end{article})
+%% -----------------------------------------------------------------------
+
+% Table S1 -- Equilibrium states
+\begin{table}
+\settablenum{S1}
+\caption{Equilibrium states with corresponding pressure--temperature conditions
+and derived fluid properties used in the simulations.}
+\centering
+\renewcommand{\arraystretch}{1.6}
+\setlength{\tabcolsep}{9pt}
+\begin{tabular}{lccccccc}
+\toprule
+State &
+$P$ &
+$T$ &
+$\rho_w$ &
+$\mu_w$ &
+$\rho_g$ &
+$\mu_g$ &
+$\sigma$ \\
+&
+(MPa) &
+(K) &
+(kg\,m$^{-3}$) &
+(mPa\,s) &
+(kg\,m$^{-3}$) &
+(mPa\,s) &
+(mN\,m$^{-1}$) \\
+\midrule
+Eq1 & 7.270 & 283.1 & 1003 & 1.302 & 57.82 & 0.01237 & 63.91 \\
+Eq2 & 4.300 & 278.2 & 1002 & 1.510 & 32.91 & 0.01126 & 66.68 \\
+\bottomrule
+\multicolumn{8}{p{0.95\linewidth}}{\footnotesize
+\textit{Note.} $P$ and $T$ denote pressure and temperature, respectively;
+$\rho_w$ and $\mu_w$ are the density and dynamic viscosity of water;
+$\rho_g$ and $\mu_g$ are the density and dynamic viscosity of methane;
+$\sigma$ is the gas--water surface tension.}
+\end{tabular}
+\end{table}
+
+% Table S2 -- Scaling parameters
+\begin{table}
+\settablenum{S2}
+\caption{Simulation scaling parameters and lattice-to-physical unit conversion relations.}
+\centering
+\renewcommand{\arraystretch}{2.5}
+\setlength{\tabcolsep}{9pt}
+\begin{tabular}{P{6.0cm}P{3.0cm}P{6cm}}
+\toprule
+Quantity & L.U. & P.U. / Reference expression \\
+\midrule
+Lattice spacing $\delta_x$ & 1.0 & $X_r = 2.5 \times 10^{-7}$ m \\
+Time step $\delta_t$       & 1.0 & $T_r = 1.5 \times 10^{-9}$ s \\
+Reference density $\rho_r$ & --- &
+  \makecell[l]{Eq1: 132.86 \\ Eq2: 138.70} \\
+Water density $\rho_w$ &
+  \makecell[l]{7.5502 (Eq1)\\ 7.2244 (Eq2)} &
+  scaled as $\rho_r$ \\
+Methane density $\rho_g$ &
+  \makecell[l]{0.4352 (Eq1)\\ 0.2373 (Eq2)} &
+  scaled as $\rho_r$ \\
+Water kinematic viscosity $\nu_w$ &
+  \makecell[l]{0.03113 (Eq1)\\ 0.03613 (Eq2)} &
+  scaled as $X_r^{2} T_r^{-1}$ \\
+Methane kinematic viscosity $\nu_g$ &
+  \makecell[l]{0.005133 (Eq1)\\ 0.0082 (Eq2)} &
+  scaled as $X_r^{2} T_r^{-1}$ \\
+Surface tension $\sigma$ &
+  \makecell[l]{0.06927 (Eq1)\\ 0.06923 (Eq2)} &
+  scaled as $\rho_r X_r^{3} T_r^{-2}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\end{document}

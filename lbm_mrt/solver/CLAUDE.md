@@ -30,6 +30,9 @@ solver/
 |------|----------|-----------|------------|
 | flow-only | 无 | 无 | `mcmp_sim` |
 | hydrate | `-DHYDRATE_ENABLE` | `hydrate.cu` `hydrate_vop.cu` | `mcmp_sim_hydrate` |
+| huang-scmp | `-DHUANG_256_BUILD` | 无（全部在 LBM.cu 内 #ifdef） | `mcmp_huang_256` |
+
+`HUANG_256_BUILD` 与 `HYDRATE_ENABLE` 互斥（`LBM.h:8` 有 `#error` 守卫）。
 
 所有水合物相关代码均被 `#ifdef HYDRATE_ENABLE` 保护，flow-only 编译完全不链接这些文件。
 
@@ -37,7 +40,9 @@ solver/
 
 ### `include/LBM.h` — 编译期常量与结构体
 
-- **网格**：`NX=300`, `NY=300`（`SCALE=1`），`NSTEPS=5000000`，`NOUTPUT=50000`
+- **网格**：
+  - flow-only / hydrate：`NX=339`, `NY=212`（`SCALE=1`），`NSTEPS=5000000`，`NOUTPUT=50000`
+  - huang-scmp：`NX=256`, `NY=256`，`NSTEPS=200000`，`NOUTPUT=5000`
   - 修改网格尺寸必须重新编译，不能运行时改变
 - **D2Q9 格子**：`e[9][2]`、`opp[9]`、`w[9]`、`w_F[9]`
 - **MRT 矩阵**：`M[9][9]`、`Minv[9][9]`、松弛率 `tau_e/tau_t/tau_q/tau_p`

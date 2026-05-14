@@ -1,0 +1,51 @@
+# configs/huang_scmp.yaml
+# Huang & Wu (2016) SCMP single-component multiphase configuration.
+# Used with mcmp_huang_256 binary.
+
+project:
+  name: huang_scmp
+  notes: "Huang & Wu (2016) SCMP validation — Carnahan-Starling EOS"
+
+# ── Physics mode ──
+huang_scmp:
+  pp_mode: 1            # SCMP (required for mcmp_huang_256)
+  k1_huang: 0.0         # surface-tension knob (0 = max tension, 1/6 = no tension)
+  k2_huang: 0.0
+  kd_huang: -0.083333
+  alpha_meq: 1.0
+  cs_a: 0.75
+  cs_b: 4.0
+  cs_R: 1.0
+  cs_T: 0.06
+  cs_G: -1.0
+  huang_R0: 40.0
+  huang_xc: 128.0
+  huang_yc: 128.0
+  huang_W: 3.0
+  huang_init_mode: 1    # 1=droplet, 2=flat interface
+
+# ── MRT relaxation ──
+relaxation:
+  tau_p_a: 1.0
+  tau_p_b: 1.0
+  kappa: 0.0
+  GAB: 0.0
+  GBA: 0.0
+  sigmaA: 0.0
+
+# ── Initial / driving (not used in SCMP) ──
+scenario:
+  init_eq: 0
+  drive: 1
+
+driving:
+  Gx: 0.0
+  Gy: 0.0
+  drive_mode: 1
+
+# ── Checkpoint ──
+checkpoint:
+  enable: false
+  every: 5000
+  keep: 2
+  resume: 0

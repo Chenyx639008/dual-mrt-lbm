@@ -48,6 +48,16 @@ int main(int argc, char** argv){
     }
     print_params_summary(P);
 
+    // ── Huang & Wu (2016) SCMP dispatch ──
+    // mcmp_huang_256 always runs SCMP; mcmp_sim always runs legacy MCMP.
+#ifdef HUANG_256_BUILD
+    {
+        const char* params_path = (argc >= 2) ? argv[1] : "params.txt";
+        run_scmp_huang(P, params_path);
+    }
+    return 0;
+#endif
+
     // 2) 设备/主机容器：Host 侧用于输出与可视化，Device 侧用于计算
     Fluid_dev A_dev,B_dev; Mix_dev M_dev;
     Fluid_host AH,BH; Mix_host MH;
