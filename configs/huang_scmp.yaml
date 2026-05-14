@@ -9,14 +9,14 @@ project:
 # ── Physics mode ──
 huang_scmp:
   pp_mode: 1            # SCMP (required for mcmp_huang_256)
-  k1_huang: 0.0         # surface-tension knob (0 = max tension, 1/6 = no tension)
+  k1_huang: 0.083333    # surface-tension knob (1/12 = half-max tension, per validation_plan §2.3)
   k2_huang: 0.0
   kd_huang: -0.083333
   alpha_meq: 1.0
-  cs_a: 0.75
+  cs_a: 1.0             # per validation_plan §2.1 (matching Huang & Wu 2016 paper)
   cs_b: 4.0
   cs_R: 1.0
-  cs_T: 0.06
+  cs_T: 0.0660          # Tr=0.7 for Tc=0.09433
   cs_G: -1.0
   huang_R0: 40.0
   huang_xc: 128.0

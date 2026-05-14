@@ -90,8 +90,16 @@ def latest_vtk(folder: str, tag: str = "flow") -> str:
     Raises:
         FileNotFoundError: If no matching files are found.
     """
-    pattern = os.path.join(folder, f"outputdata_{tag}*.vtk")
-    files = sorted(glob.glob(pattern))
-    if not files:
-        raise FileNotFoundError(f"No VTK files matching: {pattern}")
-    return files[-1]
+    # Try both naming conventions:
+    #   Legacy MCMP: outputdata_flow*.vtk in outputdata_eq/
+    #   Huang SCMP:  flow*.vtk in outputdata_scmp/
+    patterns = [
+        os.path.join(folder, f"outputdata_{tag}*.vtk"),
+        os.path.join(folder, f"{tag}*.vtk"),
+        os.path.join(folder, f"outputdata_{tag}_final.vtk"),
+    ]
+    for pattern in patterns:
+        files = sorted(glob.glob(pattern))
+        if files:
+            return files[-1]
+    raise FileNotFoundError(f"No VTK files matching any pattern in: {folder}")

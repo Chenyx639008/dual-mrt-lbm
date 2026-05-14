@@ -103,6 +103,26 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     p["GBA"] = r.get("GBA", 0.24)
     p["sigmaA"] = r.get("sigmaA", 0.11)
 
+    # ── Huang & Wu (2016) SCMP ─────────────────────────────────────────────
+    hg = raw.get("huang_scmp", {})
+    p["pp_mode"] = hg.get("pp_mode", 0)
+    p["k1_huang"] = hg.get("k1_huang", 1.0 / 12.0)
+    p["k2_huang"] = hg.get("k2_huang", 0.0)
+    p["kd_huang"] = hg.get("kd_huang", -1.0 / 12.0)
+    p["alpha_meq"] = hg.get("alpha_meq", 1.0)
+    p["cs_a"] = hg.get("cs_a", 1.0)
+    p["cs_b"] = hg.get("cs_b", 4.0)
+    p["cs_R"] = hg.get("cs_R", 1.0)
+    p["cs_T"] = hg.get("cs_T", 0.0660)
+    p["cs_G"] = hg.get("cs_G", -1.0)
+    p["huang_R0"] = hg.get("huang_R0", 40.0)
+    p["huang_xc"] = hg.get("huang_xc", 128.0)
+    p["huang_yc"] = hg.get("huang_yc", 128.0)
+    p["huang_W"] = hg.get("huang_W", 3.0)
+    p["huang_init_mode"] = hg.get("huang_init_mode", 1)
+    p["huang_rho_g"] = hg.get("huang_rho_g", 0.0)
+    p["huang_rho_l"] = hg.get("huang_rho_l", 0.0)
+
     # ── checkpoint ────────────────────────────────────────────────────────
     c = raw.get("checkpoint", {})
     p["ENABLE_CKPT"] = c.get("enable", True)
