@@ -36,7 +36,7 @@ from datetime import timedelta
 from typing import Any
 
 from lbm_mrt.core.config import load_config, override
-from lbm_mrt.core.paths import DEFAULT_BINARY, RESULTS_DIR
+from lbm_mrt.core.paths import DEFAULT_BINARY, RESULTS_DIR, SOLVER_DIR
 from lbm_mrt.io.params_writer import write_params_txt
 
 # The geometry file is always copied to this name inside the case directory,
@@ -100,7 +100,18 @@ def run_one(
         Tuple of (return_code, elapsed_seconds).
     """
     _out_root = out_root or RESULTS_DIR
-    _app = app or DEFAULT_BINARY
+    
+    # Auto-select binary based on pp_mode if not explicitly specified
+    if app is None:
+        pp_mode = params.get("pp_mode", 0)
+        if pp_mode == 1:
+            # Huang SCMP mode: use mcmp_huang_256
+            _app = os.path.join(SOLVER_DIR, "mcmp_huang_256")
+        else:
+            # Legacy MCMP mode
+            _app = DEFAULT_BINARY
+    else:
+        _app = app
 
     exp_dir = os.path.join(_out_root, case_name)
     ckpt_dir = os.path.join(exp_dir, "ckpt")

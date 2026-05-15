@@ -2105,14 +2105,20 @@ __global__ void compute_p_psi_scmp_cs(
     double denom3 = denom * denom * denom;
     denom3 = fmax(denom3, 1e-12);
 
-    // p = ρRT(1+η+η²-η³)/(1-η)³ - aρ²
-    double p_cs = cs_R_loc * T_actual * rho_safe * (1.0 + eta + eta2 - eta3) / denom3
-                - cs_a_loc * rho_safe * rho_safe;
-    pressure[idx] = fmax(p_cs, 1e-10);
+    // p_eos = ρRT(1+η+η²-η³)/(1-η)³ - aρ²  [Huang & Wu (2016) Eq. 10]
+    double p_eos = cs_R_loc * T_actual * rho_safe * (1.0 + eta + eta2 - eta3) / denom3
+                 - cs_a_loc * rho_safe * rho_safe;
 
-    // ψ = sqrt(2(p − ρcs²) / (G·dx²))
-    double diff = pressure[idx] - rho_safe * cs2_gpu;
-    double numer = 2.0 * fmax(-diff, 0.0);  // -diff > 0 when p < ρcs²
+    // For Laplace pressure difference measurement: use EOS pressure with safe lower bound
+    // In pseudopotential formalism, p can be < ρcs² near interface; output actual EOS pressure
+    // but guard against unphysical values
+    double p_min = 1e-6 * rho_safe;  // Scaled lower bound: avoid degenerate pressure
+    pressure[idx] = fmax(p_eos, p_min);
+
+    // ψ = sqrt(2·max(0, ρcs² - p) / (|G|·dx²))  [Huang & Wu (2016) Eq. 16]
+    // Note: handles p < ρcs² case where pseudopotential is needed
+    double diff = rho_safe * cs2_gpu - pressure[idx];
+    double numer = 2.0 * fmax(diff, 0.0);
     double gdenom = fabs(cs_G_loc) * deltax_gpu * deltax_gpu;
     psi[idx] = sqrt(numer / fmax(gdenom, 1e-12));
 }
