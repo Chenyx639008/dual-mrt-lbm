@@ -18,11 +18,23 @@
 
 /* ------------ ① 网格尺寸与时间控制 ------------------- */
 #ifdef HUANG_256_BUILD
+#ifndef HUANG_NX
+#define HUANG_NX 256
+#endif
+#ifndef HUANG_NY
+#define HUANG_NY 256
+#endif
+#ifndef HUANG_NSTEPS
+#define HUANG_NSTEPS 200000
+#endif
+#ifndef HUANG_NOUTPUT
+#define HUANG_NOUTPUT 5000
+#endif
 constexpr unsigned int SCALE   = 1;
-constexpr unsigned int NX      = 256;
-constexpr unsigned int NY      = 256;
-constexpr unsigned int NSTEPS  = 200000;
-constexpr unsigned int NOUTPUT = 5000;
+constexpr unsigned int NX      = HUANG_NX;
+constexpr unsigned int NY      = HUANG_NY;
+constexpr unsigned int NSTEPS  = HUANG_NSTEPS;
+constexpr unsigned int NOUTPUT = HUANG_NOUTPUT;
 #else
 constexpr unsigned int SCALE   = 1;
 constexpr unsigned int NX      = 339* SCALE;
@@ -144,6 +156,8 @@ __constant__ double d_huang_R0, d_huang_xc, d_huang_yc, d_huang_W;
 __constant__ double d_huang_rho_g, d_huang_rho_l;
 __constant__ double d_tau_huang, d_Lambda_huang;
 __constant__ int    d_huang_init_mode;
+__constant__ double d_G_ads_scmp;
+__constant__ double d_theta_contact_deg;  // ψ-based contact angle (°)
 
 #else
 extern __device__ __constant__ double GAw_by_mat_gpu[256];
@@ -178,6 +192,8 @@ extern __device__ __constant__ double d_huang_R0, d_huang_xc, d_huang_yc, d_huan
 extern __device__ __constant__ double d_huang_rho_g, d_huang_rho_l;
 extern __device__ __constant__ double d_tau_huang, d_Lambda_huang;
 extern __device__ __constant__ int    d_huang_init_mode;
+extern __device__ __constant__ double d_G_ads_scmp;
+extern __device__ __constant__ double d_theta_contact_deg;
 #endif
 
 
@@ -223,6 +239,8 @@ __device__ double get_huang_W();
 __device__ double get_huang_rho_g();
 __device__ double get_huang_rho_l();
 __device__ int    get_huang_init_mode();
+__device__ double get_G_ads_scmp();
+__device__ double get_theta_contact_deg();
 
 //状态方程参数PR-EOS
 namespace eos
@@ -306,21 +324,24 @@ struct Fluid_host {
 
 //设备端场变量结构体//
 struct Fluid_dev {
-    double *rho     = nullptr;
-    double *ux      = nullptr;
-    double *uy      = nullptr;
-    double *psi     = nullptr;
-    double *pressure= nullptr;
-    double *Fx_mol  = nullptr;
-    double *Fy_mol  = nullptr;
-    double *Fx_ads  = nullptr;
-    double *Fy_ads  = nullptr;
-    double *fin     = nullptr;
-    double *fout    = nullptr;
-    double *min     = nullptr;
-    double *mout    = nullptr;
-    double *S       = nullptr;
-    double *C       = nullptr; // B 相暂时可不使用
+    double *rho       = nullptr;
+    double *ux        = nullptr;
+    double *uy        = nullptr;
+    double *psi       = nullptr;
+    double *pressure  = nullptr;
+    double *p_xx      = nullptr;  // pressure tensor normal x (paper Eq. 56)
+    double *p_yy      = nullptr;  // pressure tensor normal y
+    double *p_xy      = nullptr;  // pressure tensor shear
+    double *Fx_mol    = nullptr;
+    double *Fy_mol    = nullptr;
+    double *Fx_ads    = nullptr;
+    double *Fy_ads    = nullptr;
+    double *fin       = nullptr;
+    double *fout      = nullptr;
+    double *min       = nullptr;
+    double *mout      = nullptr;
+    double *S         = nullptr;
+    double *C         = nullptr; // B 相暂时可不使用
 };
 
 // 实现在内存中分配和释放
@@ -404,9 +425,12 @@ void evolution_scmp(
     double* rho,   double* ux,   double* uy,
     double* psi,   double* pressure,
     double* Fx,    double* Fy,
+    double* Fx_ads, double* Fy_ads,
     double* fin,   double* fout,
     double* min_m, double* mout_m,
     double* S,     double* C,
+    double* p_xx,  double* p_yy, double* p_xy,
+    double  theta_contact_deg,
     int*    pointsflag);
 
 void init_all_scmp(
@@ -421,5 +445,10 @@ void outputvtk_scmp(int step, const std::string& folder,
                      const std::vector<double>& ux,
                      const std::vector<double>& uy,
                      const std::vector<double>& pressure,
+                     const std::vector<double>& p_xx,
+                     const std::vector<double>& p_yy,
+                     const std::vector<double>& Fx,
+                     const std::vector<double>& Fy,
+                     const std::vector<double>& psi,
                      const std::vector<int>& pointsflag);
 #endif

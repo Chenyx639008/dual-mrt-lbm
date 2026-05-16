@@ -348,6 +348,8 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
     get("huang_R0", r.huang_R0); get("huang_xc", r.huang_xc);
     get("huang_yc", r.huang_yc); get("huang_W", r.huang_W);
     get("huang_rho_g", r.huang_rho_g); get("huang_rho_l", r.huang_rho_l);
+    get("G_ads", r.G_ads_scmp);  // SCMP contact angle calibration
+    get("theta_contact_deg", r.theta_contact_deg);  // ψ-based contact angle
     get("tau_huang", r.tau_huang); get("Lambda_huang", r.Lambda_huang);
     geti("huang_init_mode", r.huang_init_mode);
 
@@ -539,7 +541,8 @@ void print_params_summary(const RuntimeParams& p){
         << " kd=" << p.kd_huang << " alpha_meq=" << p.alpha_meq << "\n"
         << "         CS: a=" << p.cs_a << " b=" << p.cs_b
         << " R=" << p.cs_R << " T=" << p.cs_T << " G=" << p.cs_G << "\n"
-        << "         init: mode=" << p.huang_init_mode
+        << "         G_ads=" << p.G_ads_scmp << " θ_contact=" << p.theta_contact_deg << "°"
+        << " init: mode=" << p.huang_init_mode
         << " R0=" << p.huang_R0 << " xc=" << p.huang_xc
         << " yc=" << p.huang_yc << " W=" << p.huang_W << "\n"
 
@@ -632,6 +635,8 @@ void push_device_constants(const RuntimeParams& p){
     CK(cudaMemcpyToSymbol(d_huang_rho_g, &p.huang_rho_g, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_huang_rho_l, &p.huang_rho_l, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_huang_init_mode, &p.huang_init_mode, sizeof(int)));
+    CK(cudaMemcpyToSymbol(d_G_ads_scmp, &p.G_ads_scmp, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_theta_contact_deg, &p.theta_contact_deg, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_tau_huang,  &p.tau_huang,  sizeof(double)));
     CK(cudaMemcpyToSymbol(d_Lambda_huang, &p.Lambda_huang, sizeof(double)));
 
@@ -1102,6 +1107,8 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
 
     // ── Host-side buffers for output ──
     std::vector<double> h_rho(N), h_ux(N), h_uy(N), h_pressure(N);
+    std::vector<double> h_p_xx(N), h_p_yy(N);
+    std::vector<double> h_Fx(N), h_Fy(N), h_psi(N);
     std::vector<int>    h_flag(N);
 
     // ── Output directory (respects file_dir from params or LBM_FILE_DIR env) ──
@@ -1129,8 +1136,11 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
         evolution_scmp(
             F.rho, F.ux, F.uy, F.psi, F.pressure,
             F.Fx_mol, F.Fy_mol,
+            F.Fx_ads, F.Fy_ads,
             F.fin, F.fout, F.min, F.mout,
             F.S, F.C,
+            F.p_xx, F.p_yy, F.p_xy,
+            P.theta_contact_deg,
             pointsflag_dev);
 
         // Periodic output
@@ -1139,9 +1149,14 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
             cudaMemcpy(h_ux.data(),       F.ux,       N*sizeof(double), cudaMemcpyDeviceToHost);
             cudaMemcpy(h_uy.data(),       F.uy,       N*sizeof(double), cudaMemcpyDeviceToHost);
             cudaMemcpy(h_pressure.data(), F.pressure, N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_p_xx.data(),     F.p_xx,     N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_p_yy.data(),     F.p_yy,     N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_Fx.data(),     F.Fx_mol,   N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_Fy.data(),     F.Fy_mol,   N*sizeof(double), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_psi.data(),    F.psi,      N*sizeof(double), cudaMemcpyDeviceToHost);
             cudaMemcpy(h_flag.data(),     pointsflag_dev, N*sizeof(int), cudaMemcpyDeviceToHost);
 
-            outputvtk_scmp(step, out_dir, "flow", "scmp_step", h_rho, h_ux, h_uy, h_pressure, h_flag);
+            outputvtk_scmp(step, out_dir, "flow", "scmp_step", h_rho, h_ux, h_uy, h_pressure, h_p_xx, h_p_yy, h_Fx, h_Fy, h_psi, h_flag);
             printf("[scmp] step %d output written\n", step);
         }
     }
@@ -1151,10 +1166,15 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
     cudaMemcpy(h_ux.data(),       F.ux,       N*sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_uy.data(),       F.uy,       N*sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_pressure.data(), F.pressure, N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_p_xx.data(),     F.p_xx,     N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_p_yy.data(),     F.p_yy,     N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_Fx.data(),     F.Fx_mol,   N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_Fy.data(),     F.Fy_mol,   N*sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_psi.data(),    F.psi,      N*sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_flag.data(),     pointsflag_dev, N*sizeof(int), cudaMemcpyDeviceToHost);
 
     int final_step = static_cast<int>(NSTEPS);
-    outputvtk_scmp(final_step, out_dir, "flow", "scmp_final", h_rho, h_ux, h_uy, h_pressure, h_flag);
+    outputvtk_scmp(final_step, out_dir, "flow", "scmp_final", h_rho, h_ux, h_uy, h_pressure, h_p_xx, h_p_yy, h_Fx, h_Fy, h_psi, h_flag);
 
     auto t_end = std::chrono::high_resolution_clock::now();
     double elapsed = std::chrono::duration<double>(t_end - t_start).count();

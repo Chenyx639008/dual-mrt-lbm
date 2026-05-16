@@ -66,6 +66,8 @@ __device__ __forceinline__ double get_huang_W()        { return d_huang_W; }
 __device__ __forceinline__ double get_huang_rho_g()    { return d_huang_rho_g; }
 __device__ __forceinline__ double get_huang_rho_l()    { return d_huang_rho_l; }
 __device__ __forceinline__ int    get_huang_init_mode(){ return d_huang_init_mode; }
+__device__ __forceinline__ double get_G_ads_scmp()     { return d_G_ads_scmp; }
+__device__ __forceinline__ double get_theta_contact_deg() { return d_theta_contact_deg; }
 
 
 __constant__ int e_gpu[Q][2];//D2Q9速度方向向量（如 e[9][2]）
@@ -111,6 +113,7 @@ __global__ void dbg_consts_once(){
         // ── Huang & Wu (2016) SCMP ──
         sink += (double)get_pp_mode();
         sink += get_k1_huang() + get_k2_huang() + get_kd_huang() + get_alpha_meq();
+    sink += get_G_ads_scmp() + get_theta_contact_deg();
         sink += get_cs_a() + get_cs_b() + get_cs_R() + get_cs_T() + get_cs_G();
         sink += get_huang_R0() + get_huang_xc() + get_huang_yc() + get_huang_W();
         sink += (double)get_huang_init_mode();
@@ -371,6 +374,8 @@ void alloc_fluid(Fluid_dev& f){
     cudaMalloc(&f.rho ,mem_size_scalar); cudaMalloc(&f.ux  ,mem_size_scalar);
     cudaMalloc(&f.uy  ,mem_size_scalar); cudaMalloc(&f.psi ,mem_size_scalar);
     cudaMalloc(&f.pressure,mem_size_scalar);
+    cudaMalloc(&f.p_xx, mem_size_scalar); cudaMalloc(&f.p_yy, mem_size_scalar);
+    cudaMalloc(&f.p_xy, mem_size_scalar);
     cudaMalloc(&f.Fx_mol  ,mem_size_scalar);  cudaMalloc(&f.Fy_mol  ,mem_size_scalar);
     cudaMalloc(&f.Fx_ads  ,mem_size_scalar);  cudaMalloc(&f.Fy_ads  ,mem_size_scalar);
     cudaMalloc(&f.fin ,mem_size_distfun); cudaMalloc(&f.fout,mem_size_distfun);
@@ -387,6 +392,7 @@ void alloc_mix(Mix_dev& m){
 void free_fluid(Fluid_dev& f){
     auto df=[&](double*& p){ if(p){ cudaFree(p); p=nullptr;} };
     df(f.rho ); df(f.ux ); df(f.uy ); df(f.psi ); df(f.pressure);
+    df(f.p_xx); df(f.p_yy); df(f.p_xy);
     df(f.Fx_mol  ); df(f.Fy_mol  ); df(f.Fx_ads  ); df(f.Fy_ads  );
     df(f.fin); df(f.fout); df(f.min ); df(f.mout);
     df(f.S   ); df(f.C   );
@@ -2105,16 +2111,18 @@ __global__ void compute_p_psi_scmp_cs(
     double denom3 = denom * denom * denom;
     denom3 = fmax(denom3, 1e-12);
 
-    // p = ρRT(1+η+η²-η³)/(1-η)³ - aρ²
-    double p_cs = cs_R_loc * T_actual * rho_safe * (1.0 + eta + eta2 - eta3) / denom3
-                - cs_a_loc * rho_safe * rho_safe;
-    pressure[idx] = fmax(p_cs, 1e-10);
+    // p_eos = ρRT(1+η+η²-η³)/(1-η)³ - aρ²
+    double p_eos = cs_R_loc * T_actual * rho_safe * (1.0 + eta + eta2 - eta3) / denom3
+                 - cs_a_loc * rho_safe * rho_safe;
 
     // ψ = sqrt(2(p − ρcs²) / (G·dx²))
-    double diff = pressure[idx] - rho_safe * cs2_gpu;
+    double diff = p_eos - rho_safe * cs2_gpu;
     double numer = 2.0 * fmax(-diff, 0.0);  // -diff > 0 when p < ρcs²
     double gdenom = fabs(cs_G_loc) * deltax_gpu * deltax_gpu;
     psi[idx] = sqrt(numer / fmax(gdenom, 1e-12));
+
+    // Huang 宏观压力：p = c_s^2 rho + 1/2 c^2 G psi^2
+    pressure[idx] = cs2_gpu * rho_safe + 0.5 * c_gpu * c_gpu * (cs_G_loc * psi[idx] * psi[idx]);
 }
 
 /* ── SCMP molecular force kernel ──────────────────────────────── */
@@ -2129,26 +2137,108 @@ __global__ void compute_molecular_force_scmp(
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= NX || y >= NY) return;
     int idx = findindex_scalar_gpu(x, y);
-    if (pointsflag[idx] < 0) return;
+    if (pointsflag[idx] < 0) { Fx[idx]=0.0; Fy[idx]=0.0; return; }
 
     double psi0 = psi[idx];
     double G = get_cs_G();
 
-    double sum_x = 0.0, sum_y = 0.0;
-    #pragma unroll
-    for (int k = 1; k < Q; ++k) {
-        int xp = (x + e_gpu[k][0] + NX) % NX;
-        int yp = (y + e_gpu[k][1] + NY) % NY;
-        int idxp = findindex_scalar_gpu(xp, yp);
+    // Channel flow (huang_init_mode==3): suppress molecular force at boundary nodes
+    // to avoid spurious wall forces; body force still applied
+    bool is_boundary = (pointsflag[idx] == 0);
 
-        double psi_nb = psi[idxp];
-        sum_x += w_F_gpu[k] * e_gpu[k][0] * psi_nb;
-        sum_y += w_F_gpu[k] * e_gpu[k][1] * psi_nb;
+    double sum_x = 0.0, sum_y = 0.0;
+    if (!is_boundary) {
+        #pragma unroll
+        for (int k = 1; k < Q; ++k) {
+            int xp = (x + e_gpu[k][0] + NX) % NX;
+            int yp = (y + e_gpu[k][1] + NY) % NY;
+            int idxp = findindex_scalar_gpu(xp, yp);
+            double psi_nb = psi[idxp];
+            sum_x += w_F_gpu[k] * e_gpu[k][0] * psi_nb;
+            sum_y += w_F_gpu[k] * e_gpu[k][1] * psi_nb;
+        }
     }
 
     // F = -G ψ(x) Σ w_k ψ(x+e_k) e_k
-    Fx[idx] = -G * psi0 * sum_x;
-    Fy[idx] = -G * psi0 * sum_y;
+    Fx[idx] = -G * psi0 * sum_x + get_Gx() * rho[idx];
+    Fy[idx] = -G * psi0 * sum_y + get_Gy() * rho[idx];
+}
+
+/* ── SCMP adsorption force (Yang/Li style G_ads·ψ) ────────── */
+__global__ void compute_adsorption_force_scmp(
+    const double*  psi,
+    const int*     pointsflag,
+    double*        Fx_ads,
+    double*        Fy_ads)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    // Only compute on fluid nodes (pointsflag==1) near walls
+    if (pointsflag[idx] != 1) { Fx_ads[idx] = 0.0; Fy_ads[idx] = 0.0; return; }
+
+    double psi0 = psi[idx];
+    double G_ads = get_G_ads_scmp();  // SCMP direct G_ads (bypasses GAw table)
+
+    double sum_x = 0.0, sum_y = 0.0;
+    #pragma unroll
+    for (int k = 1; k < Q; ++k) {
+        int xp = x + e_gpu[k][0];
+        int yp = y + e_gpu[k][1];
+        if (xp < 0 || xp >= NX || yp < 0 || yp >= NY) continue;
+        int idxp = findindex_scalar_gpu(xp, yp);
+        // s(x+e_k) = 1 if ghost or boundary wall node, 0 otherwise
+        if (pointsflag[idxp] == -1 || pointsflag[idxp] == 0) {
+            sum_x += w_F_gpu[k] * e_gpu[k][0];
+            sum_y += w_F_gpu[k] * e_gpu[k][1];
+        }
+    }
+    // F_ads = -G_ads · ψ(x) · Σ_k w_F_k · s(x+e_k) · e_k
+    Fx_ads[idx] = -G_ads * psi0 * sum_x;
+    Fy_ads[idx] = -G_ads * psi0 * sum_y;
+}
+
+/* ── ψ-based ghost BC for contact angle (paper Eq. 34) ─────── */
+__global__ void update_ghost_psi_bc(
+    double*       psi,
+    const int*    pointsflag,
+    double        theta_target_rad)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    // Only operate on ghost nodes at bottom wall (y==0)
+    if (pointsflag[idx] != -1 || y != 0) return;
+
+    // Dual mode: theta<0 → direct psi override; theta>=0 → cos²(θ/2) interpolation
+    if (theta_target_rad < 0.0) {
+        // Direct ghost ψ: use absolute value (e.g., θ=-0.15 → ψ_ghost=0.15)
+        psi[idx] = -theta_target_rad;
+    } else {
+        double psi_l = 0.15;
+        double psi_g = 0.01;
+        double cos_half = cos(theta_target_rad * 0.5);
+        double sin_half = sin(theta_target_rad * 0.5);
+        psi[idx] = psi_l * cos_half * cos_half + psi_g * sin_half * sin_half;
+    }
+}
+
+/* ── Add adsorption force to total force ────────────────────── */
+__global__ void add_adsorption_to_force(
+    double* Fx,       double* Fy,
+    const double* Fx_ads, const double* Fy_ads,
+    const int* pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] == 1) {
+        Fx[idx] += Fx_ads[idx];
+        Fy[idx] += Fy_ads[idx];
+    }
 }
 
 /* ── SCMP velocity kernel (half-force shift) ──────────────────── */
@@ -2258,6 +2348,68 @@ __global__ void compute_Q_huang_gpu(
     C[findindex_distfun_gpu(x, y, 8)] =  sp * Qm8;
 }
 
+/* ── Pressure tensor (paper Eq. 34 + 55) ───────────────────── */
+__global__ void compute_pressure_tensor_scmp(
+    const double* rho,     const double* psi,
+    const double* Fx,      const double* Fy,
+    double*       p_xx,    double*       p_yy,
+    double*       p_xy,
+    const int*    pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] < 0) {
+        p_xx[idx] = 0.0; p_yy[idx] = 0.0; p_xy[idx] = 0.0;
+        return;
+    }
+
+    double rho_safe = fmax(rho[idx], 1e-6);
+    double psi0 = psi[idx];
+    double G = get_cs_G();
+    double cs2 = c_gpu * c_gpu / 3.0;  // c_s² = c²/3
+
+    // ── Discrete pressure tensor (paper Eq. 34) ──
+    // P_discrete,αβ = ρc_s² δ_αβ + (G/2)·ψ Σ_i w_F(|e_i|²)·ψ(x+e_i)·e_iα·e_iβ
+    double pd_xx = cs2 * rho_safe;
+    double pd_yy = cs2 * rho_safe;
+    double pd_xy = 0.0;
+
+    #pragma unroll
+    for (int k = 1; k < Q; ++k) {
+        int xp = (x + e_gpu[k][0] + NX) % NX;
+        int yp = (y + e_gpu[k][1] + NY) % NY;
+        int idxp = findindex_scalar_gpu(xp, yp);
+        double psi_nb = psi[idxp];
+        double w = w_F_gpu[k];
+        double ex = (double)e_gpu[k][0];
+        double ey = (double)e_gpu[k][1];
+        double contrib = 0.5 * G * psi0 * w * psi_nb;
+        pd_xx += contrib * ex * ex;
+        pd_yy += contrib * ey * ey;
+        pd_xy += contrib * ex * ey;
+    }
+
+    // ── Q_m correction (paper Eq. 55→56): P_Q = k1 G ∇ψ∇ψ + k2 G |∇ψ|² I ──
+    // Using ∇ψ = −F/(G ψ) from Eq. 58
+    double k1 = get_k1_huang();
+    double k2 = get_k2_huang();
+    double psi2 = psi0 * psi0 + 1e-12;
+    double inv_Gpsi2 = 1.0 / (G * psi2);
+
+    double Fx_loc = Fx[idx], Fy_loc = Fy[idx];
+    double F2 = Fx_loc * Fx_loc + Fy_loc * Fy_loc;
+
+    double q_xx = (k1 * Fx_loc * Fx_loc + k2 * F2) * inv_Gpsi2;
+    double q_yy = (k1 * Fy_loc * Fy_loc + k2 * F2) * inv_Gpsi2;
+    double q_xy = k1 * Fx_loc * Fy_loc * inv_Gpsi2;
+
+    p_xx[idx] = pd_xx + q_xx;
+    p_yy[idx] = pd_yy + q_yy;
+    p_xy[idx] = pd_xy + q_xy;
+}
+
 /* ── MRT collision for single-component ──────────────────────── */
 __global__ void mrt_collide_single_component_gpu(
     const double* rho,
@@ -2338,6 +2490,38 @@ __global__ void stream_single_component_gpu(
     }
 }
 
+/* ── SCMP bounce-back boundary for single fluid ─────────────── */
+__global__ void boundary_scmp_gpu(
+    double* fin, const double* fout, const int* pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    // Handle both: boundary nodes (0) AND fluid nodes (1) adjacent to ghost (-1)
+    bool is_boundary = (pointsflag[idx] == 0);
+    bool is_wall_fluid = (pointsflag[idx] == 1);
+
+    if (!is_boundary && !is_wall_fluid) return;
+
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        int ip = (x - e_gpu[k][0] + NX) % NX;
+        int jp = (y - e_gpu[k][1] + NY) % NY;
+        int idx_nb = findindex_scalar_gpu(ip, jp);
+
+        int idxk = findindex_distfun_gpu(x, y, k);
+        // If neighbor is ghost, bounce back. Otherwise, normal stream.
+        if (pointsflag[idx_nb] == -1) {
+            int idxk_opp = findindex_distfun_gpu(x, y, opp_gpu[k]);
+            fin[idxk] = fout[idxk_opp];
+        } else {
+            int idxk_nb = findindex_distfun_gpu(ip, jp, k);
+            fin[idxk] = fout[idxk_nb];
+        }
+    }
+}
+
 /* ── SCMP Tanh droplet / flat-interface initialization ───────── */
 __global__ void init_all_scmp_gpu(
     double* rho,   double* fin,   double* fout,
@@ -2349,8 +2533,27 @@ __global__ void init_all_scmp_gpu(
     if (x >= NX || y >= NY) return;
     int idx = findindex_scalar_gpu(x, y);
 
-    // SCMP: all points are fluid
-    pointsflag[idx] = 1;
+    // SCMP: default periodic-fluid; mode 3 enables channel walls for Poiseuille
+    // mode 4: bottom wall only (for contact angle)
+    if (get_huang_init_mode() == 3) {
+        if (y == 0 || y == NY - 1) {
+            pointsflag[idx] = -1;  // ghost wall layer
+        } else if (y == 1 || y == NY - 2) {
+            pointsflag[idx] = 0;   // bounce-back boundary layer
+        } else {
+            pointsflag[idx] = 1;
+        }
+    } else if (get_huang_init_mode() == 4) {
+        // Contact angle: bottom ghost only (y=0), fluid from y=1
+        // No separate boundary layer → ghost ψ directly affects fluid stencil
+        if (y == 0) {
+            pointsflag[idx] = -1;  // ghost wall layer
+        } else {
+            pointsflag[idx] = 1;
+        }
+    } else {
+        pointsflag[idx] = 1;
+    }
 
     // Compute rho from tanh profile (Huang & Wu 2016 Eq. 46a)
     double cs_a_loc = get_cs_a();
@@ -2391,22 +2594,27 @@ __global__ void init_all_scmp_gpu(
     double rho_mid = 0.5 * (rho_l_est + rho_g_est);
     double rho_amp = 0.5 * (rho_l_est - rho_g_est);
 
-    double r = 0.0;
-    if (mode == 1) {
-        // Droplet: radial tanh
-        double dx_c = (double)x - xc;
-        double dy_c = (double)y - yc;
-        r = sqrt(dx_c*dx_c + dy_c*dy_c);
+    if (mode == 3) {
+        // Uniform liquid for channel flow
+        rho[idx] = fmax(get_huang_rho_l(), 1e-6);
     } else {
-        // Flat interface: y-based
-        r = (double)y;
+        double r = 0.0;
+        if (mode == 1 || mode == 4) {
+            // Droplet: radial tanh (mode 1 for periodic, mode 4 for wall contact)
+            double dx_c = (double)x - xc;
+            double dy_c = (double)y - yc;
+            r = sqrt(dx_c*dx_c + dy_c*dy_c);
+        } else {
+            // Flat interface: y-based
+            r = (double)y;
+        }
+
+        rho[idx] = rho_mid + rho_amp * tanh(2.0 * (R0 - r) / W);
+
+        // Clamp to physical range
+        rho[idx] = fmax(rho[idx], 1e-6);
+        rho[idx] = fmin(rho[idx], 1.0);
     }
-
-    rho[idx] = rho_mid + rho_amp * tanh(2.0 * (R0 - r) / W);
-
-    // Clamp to physical range
-    rho[idx] = fmax(rho[idx], 1e-6);
-    rho[idx] = fmin(rho[idx], 1.0);
 
     // Initialize f to equilibrium at u=0
     double u0[2] = {0.0, 0.0};
@@ -2426,9 +2634,12 @@ __host__ void evolution_scmp(
     double* rho,   double* ux,   double* uy,
     double* psi,   double* pressure,
     double* Fx,    double* Fy,
+    double* Fx_ads, double* Fy_ads,
     double* fin,   double* fout,
     double* min_m, double* mout_m,
     double* S,     double* C,
+    double* p_xx,  double* p_yy, double* p_xy,
+    double  theta_contact_deg,
     int*    pointsflag)
 {
     const int nThreadsx = 32, nThreadsy = 1;
@@ -2439,16 +2650,31 @@ __host__ void evolution_scmp(
     compute_p_psi_scmp_cs<<<grid_scmp, threads>>>(rho, pressure, psi, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 
+    // ── ψ-based ghost BC: theta>0 → cos² formula (deg→rad); theta<0 → |theta|=direct ψ
+    if (fabs(theta_contact_deg) > 1e-12) {
+        double arg = (theta_contact_deg > 0.0) ? (theta_contact_deg * 0.017453292519943295) : theta_contact_deg;
+        update_ghost_psi_bc<<<grid_scmp, threads>>>(psi, pointsflag, arg);
+        CUDA_CHECK(cudaGetLastError());
+    }
+
     compute_molecular_force_scmp<<<grid_scmp, threads>>>(psi, rho, Fx, Fy, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    // ── Q_m uses ONLY molecular force (paper Eq. 57-59: F = -Gψ∇ψ) ──
+    compute_Q_huang_gpu<<<grid_scmp, threads>>>(rho, psi, Fx, Fy, C, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    // ── Adsorption force added AFTER Q_m (keeps F_mol pure for Q_m) ──
+    compute_adsorption_force_scmp<<<grid_scmp, threads>>>(psi, pointsflag, Fx_ads, Fy_ads);
+    CUDA_CHECK(cudaGetLastError());
+    add_adsorption_to_force<<<grid_scmp, threads>>>(Fx, Fy, Fx_ads, Fy_ads, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 
     compute_velocity_scmp<<<grid_scmp, threads>>>(rho, fin, Fx, Fy, ux, uy, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 
+    // ── S (Guo forcing) uses TOTAL force (molecular + adsorption + body) ──
     compute_S_huang_gpu<<<grid_scmp, threads>>>(ux, uy, rho, Fx, Fy, S, pointsflag);
-    CUDA_CHECK(cudaGetLastError());
-
-    compute_Q_huang_gpu<<<grid_scmp, threads>>>(rho, psi, Fx, Fy, C, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 
     mrt_collide_single_component_gpu<<<grid_scmp, threads>>>(
@@ -2456,6 +2682,14 @@ __host__ void evolution_scmp(
     CUDA_CHECK(cudaGetLastError());
 
     stream_single_component_gpu<<<grid_scmp, threads>>>(fin, fout, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    boundary_scmp_gpu<<<grid_scmp, threads>>>(fin, fout, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    // Compute pressure tensor (after collision, before next step)
+    compute_pressure_tensor_scmp<<<grid_scmp, threads>>>(
+        rho, psi, Fx, Fy, p_xx, p_yy, p_xy, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -2483,6 +2717,11 @@ __host__ void outputvtk_scmp(int step, const std::string& folder,
                               const std::vector<double>& ux,
                               const std::vector<double>& uy,
                               const std::vector<double>& pressure,
+                              const std::vector<double>& p_xx,
+                              const std::vector<double>& p_yy,
+                              const std::vector<double>& Fx,
+                              const std::vector<double>& Fy,
+                              const std::vector<double>& psi,
                               const std::vector<int>& pointsflag)
 {
     namespace fs = std::filesystem;
@@ -2506,6 +2745,11 @@ __host__ void outputvtk_scmp(int step, const std::string& folder,
     write_scalar("ux", ux);
     write_scalar("uy", uy);
     write_scalar("pressure", pressure);
+    write_scalar("p_xx", p_xx);
+    write_scalar("p_yy", p_yy);
+    write_scalar("Fx", Fx);
+    write_scalar("Fy", Fy);
+    write_scalar("psi", psi);
 
     vtk << "\nSCALARS flag int\nLOOKUP_TABLE default\n";
     for (int f : pointsflag) { int t = f; SwapEnd_int(t); vtk.write(reinterpret_cast<char*>(&t), sizeof(int)); }

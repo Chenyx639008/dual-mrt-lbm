@@ -66,6 +66,8 @@ struct RuntimeParams {
   int    huang_init_mode = 1;        // 1=droplet, 2=flat interface
   double huang_rho_g  = 0.0;         // 共存气相密度（0=从init kernel估算）
   double huang_rho_l  = 0.0;         // 共存液相密度（0=从init kernel估算）
+  double G_ads_scmp   = 0.0;         // SCMP 吸附力 G_ads（非零时直接设 GAw[1]；用于接触角标定）
+  double theta_contact_deg = 90.0;    // ψ-based contact angle target (°)
   double tau_huang     = 1.5;         // SCMP relaxation time τ (paper: τ=1.5)
   double Lambda_huang  = 1.0/12.0;    // Λ for s_q formula (paper: 1/12)
 

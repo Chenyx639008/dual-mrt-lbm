@@ -35,7 +35,7 @@ from lbm_mrt.runners.single_run import run_one
 
 # Columns in the design CSV that override params.txt keys.
 # All other CSV columns are ignored (e.g. exp_id, case_name, geometry_src).
-_META_COLS = {"exp_id", "exp_id_str", "case_name", "geometry_src"}
+_META_COLS = {"exp_id", "exp_id_str", "case_name", "geometry_src", "app"}
 
 
 def run_batch(
@@ -78,13 +78,13 @@ def run_batch(
         row_dict: dict[str, Any] = row.to_dict()
         case_name: str = str(row_dict.get("case_name", f"case_{i:04d}"))
         geometry_src: str | None = row_dict.get("geometry_src", None)
+        row_app: str | None = row_dict.get("app", None)
 
         # Build per-case overrides from CSV columns that match known param keys
         overrides = {
-            k: v for k, v in row_dict.items()
-            if k not in _META_COLS
-            and k in base_params
-            and pd.notna(v)
+            k: v
+            for k, v in row_dict.items()
+            if k not in _META_COLS and k in base_params and pd.notna(v)
         }
         run_params = cfg.override(base_params, **overrides)
 
@@ -94,7 +94,7 @@ def run_batch(
             case_name=case_name,
             geometry_src=str(geometry_src) if pd.notna(geometry_src) else None,
             out_root=_out_root,
-            app=_app,
+            app=str(row_app) if pd.notna(row_app) and row_app else _app,
             resume=resume,
             strict_geometry=strict_geometry,
             hint_dir=csv_dir,

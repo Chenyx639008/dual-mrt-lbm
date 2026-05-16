@@ -1,2 +1,2 @@
 pp_mode,init_eq,tau_p_a,tau_p_b,kappa,GAB,GBA,sigmaA,k1_huang,k2_huang,kd_huang,alpha_meq,cs_a,cs_b,cs_R,cs_G,huang_W,huang_init_mode,Gx,Gy,drive_mode,ENABLE_CKPT,OUTPUT_EVERY,case_name,cs_T,huang_R0,huang_xc,huang_yc,huang_rho_g,huang_rho_l
-1,0,1.0,1.0,0.0,0.0,0.0,0.0,0.08333333333333333,0.0,-0.08333333333333333,1.0,1.0,4.0,1.0,-1.0,3.0,1,0.0,0.0,1,False,5000,spurious_NY256_R51,0.0660275,51.0,128.0,128.0,0.009291723045748643,0.3581443948747237
+1,0,1.0,1.0,0.0,0.0,0.0,0.0,0.08333333333333333,0.0,-0.08333333333333333,1.0,1.0,4.0,1.0,-1.0,3.0,1,0.0,0.0,1,False,5000,spurious_NY256_R51,0.7,51.0,128.0,128.0,0.009291723045748643,0.3581443948747237

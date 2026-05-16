@@ -55,6 +55,13 @@ from lbm_mrt.validation.cs_eos import (
 
 BINARY = os.path.join(PROJ_ROOT, "lbm_mrt", "solver", "mcmp_huang_256")
 
+
+def _huang_binary_for_grid(nx: int, ny: int) -> str:
+    if nx == ny:
+        return os.path.join(PROJ_ROOT, "lbm_mrt", "solver", f"mcmp_huang_{ny}")
+    return os.path.join(PROJ_ROOT, "lbm_mrt", "solver", f"mcmp_huang_{nx}x{ny}")
+
+
 # ── Unified CS-EOS parameters (matching Huang & Wu 2016 paper) ──
 CS_A = 1.0
 CS_B = 4.0
@@ -99,8 +106,11 @@ def _coexistence_density(Tr: float) -> tuple[float, float]:
     T_abs = Tr * TC
     result = maxwell_coexistence(CS_A, CS_B, CS_R, T_abs)
     if result is None:
-        raise RuntimeError(f"Maxwell coexistence failed for Tr={Tr:.2f} (T={T_abs:.4f})")
+        raise RuntimeError(
+            f"Maxwell coexistence failed for Tr={Tr:.2f} (T={T_abs:.4f})"
+        )
     return float(result[0]), float(result[1])
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Design CSV generators
@@ -121,17 +131,18 @@ def generate_laplace_design(
     rows = []
     for Tr in tr_list:
         rg, rl = _coexistence_density(Tr)
-        T_abs = Tr * TC
         for R in r_list:
             row = dict(base)
             row["case_name"] = f"laplace_Tr{Tr:.2f}_R{R:.0f}"
-            row["cs_T"] = T_abs
+            row["cs_T"] = Tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
             row["huang_R0"] = R
             row["huang_rho_g"] = rg
             row["huang_rho_l"] = rl
             rows.append(row)
     pd.DataFrame(rows).to_csv(out_path, index=False)
-    print(f"[design] {out_path} ({len(rows)} cases: {len(tr_list)} Tr × {len(r_list)} R)")
+    print(
+        f"[design] {out_path} ({len(rows)} cases: {len(tr_list)} Tr × {len(r_list)} R)"
+    )
     return out_path
 
 
@@ -145,12 +156,11 @@ def generate_decoupling_design(
 
     base = _base_params()
     rg, rl = _coexistence_density(tr)
-    T_abs = tr * TC
     rows = []
     for k1 in k1_list:
         row = dict(base)
         row["case_name"] = f"decoupling_Tr{tr:.2f}_k1{k1:.4f}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["k1_huang"] = k1
         row["huang_R0"] = 40.0
         row["huang_xc"] = 128.0
@@ -174,10 +184,9 @@ def generate_coexistence_design(
     rows = []
     for Tr in tr_list:
         rg, rl = _coexistence_density(Tr)
-        T_abs = Tr * TC
         row = dict(base)
         row["case_name"] = f"coex_Tr{Tr:.2f}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = Tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["huang_init_mode"] = 2  # flat interface
         row["huang_yc"] = 64.0
         row["huang_W"] = 5.0
@@ -200,13 +209,12 @@ def generate_spurious_design(
 
     base = _base_params()
     rg, rl = _coexistence_density(tr)
-    T_abs = tr * TC
     rows = []
     for ny in ny_list:
         R = int(0.2 * ny)
         row = dict(base)
         row["case_name"] = f"spurious_NY{ny}_R{R}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["huang_R0"] = float(R)
         row["huang_xc"] = float(ny / 2)
         row["huang_yc"] = float(ny / 2)
@@ -228,19 +236,21 @@ def generate_poiseuille_design(
 
     base = _base_params()
     base["huang_init_mode"] = 3  # uniform liquid (needs solver extension)
-    base["Gy"] = 5e-9
+    base["Gx"] = 5e-9
     rows = []
     for Tr in tr_list:
         _, rl = _coexistence_density(Tr)
-        T_abs = Tr * TC
         row = dict(base)
         row["case_name"] = f"poiseuille_Tr{Tr:.2f}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = Tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["huang_rho_g"] = rl
         row["huang_rho_l"] = rl
+        row["app"] = _huang_binary_for_grid(300, 200)
         rows.append(row)
     pd.DataFrame(rows).to_csv(out_path, index=False)
-    print(f"[design] {out_path} ({len(rows)} cases, Tr ∈ {tr_list}) [P1: needs solver extension]")
+    print(
+        f"[design] {out_path} ({len(rows)} cases, Tr ∈ {tr_list}) [P1: needs solver extension]"
+    )
     return out_path
 
 
@@ -257,6 +267,7 @@ def generate_mesh_design(
     h_ref = 198.0
     base = _base_params()
     base["huang_init_mode"] = 3
+    base["Gx"] = 5e-9
     _, rl = _coexistence_density(tr)
     T_abs = tr * TC
     rows = []
@@ -266,12 +277,15 @@ def generate_mesh_design(
         row = dict(base)
         row["case_name"] = f"mesh_NY{ny}"
         row["cs_T"] = T_abs
-        row["Gy"] = Fb
+        row["Gx"] = Fb
         row["huang_rho_g"] = rl
         row["huang_rho_l"] = rl
+        row["app"] = _huang_binary_for_grid(ny, ny)
         rows.append(row)
     pd.DataFrame(rows).to_csv(out_path, index=False)
-    print(f"[design] {out_path} ({len(rows)} cases, NY ∈ {ny_list}) [P1: needs multi-grid]")
+    print(
+        f"[design] {out_path} ({len(rows)} cases, NY ∈ {ny_list}) [P1: needs multi-grid]"
+    )
     return out_path
 
 
@@ -280,7 +294,9 @@ def generate_mesh_design(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def run_batch_sweep(design_csv: str, out_root: str | None = None, app: str | None = None) -> str:
+def run_batch_sweep(
+    design_csv: str, out_root: str | None = None, app: str | None = None
+) -> str:
     """Run all cases in a design CSV via the batch runner."""
     from lbm_mrt.runners.batch_run import run_batch
 
@@ -326,6 +342,7 @@ def analyze_laplace(results_dir: str) -> dict:
     # Generate figures
     try:
         from lbm_mrt.validation.laplace_law import plot_laplace_double_panel
+
         fig_path = os.path.join(results_dir, "fig_laplace.pdf")
         plot_laplace_double_panel(df, fig_path, fit_csv=fit_csv)
         summary["figure"] = fig_path
@@ -346,19 +363,24 @@ def analyze_decoupling(results_dir: str) -> dict:
         x = valid["one_minus_6k1"].values
         y = valid["sigma"].values
         slope = float(np.sum(x * y) / np.sum(x * x))
-        r2_sigma = float(1.0 - np.sum((y - slope * x) ** 2) / np.sum((y - np.mean(y)) ** 2))
+        r2_sigma = float(
+            1.0 - np.sum((y - slope * x) ** 2) / np.sum((y - np.mean(y)) ** 2)
+        )
         rho_l_drift = float(valid["rho_l"].std() / max(valid["rho_l"].mean(), 1e-12))
         rho_g_drift = float(valid["rho_g"].std() / max(valid["rho_g"].mean(), 1e-12))
-        summary.update({
-            "sigma_slope": slope,
-            "sigma_R2": r2_sigma,
-            "rho_l_drift": rho_l_drift,
-            "rho_g_drift": rho_g_drift,
-            "pass_sigma": r2_sigma >= 0.99,
-            "pass_drift": max(rho_l_drift, rho_g_drift) < 0.01,
-        })
+        summary.update(
+            {
+                "sigma_slope": slope,
+                "sigma_R2": r2_sigma,
+                "rho_l_drift": rho_l_drift,
+                "rho_g_drift": rho_g_drift,
+                "pass_sigma": r2_sigma >= 0.99,
+                "pass_drift": max(rho_l_drift, rho_g_drift) < 0.01,
+            }
+        )
     try:
         from lbm_mrt.validation.decoupling_sweep import plot_decoupling
+
         fig_path = os.path.join(results_dir, "fig_decoupling.pdf")
         plot_decoupling(df, fig_path)
         summary["figure"] = fig_path
@@ -394,13 +416,18 @@ def analyze_coexistence(results_dir: str) -> dict:
     # Compare with Maxwell
     if len(Ts) >= 2:
         from lbm_mrt.validation.coexistence import compare_coexistence_curves
+
         try:
             maxwell = coexistence_curve(CS_A, CS_B, CS_R, np.array(Ts) * TC)
             deviations = []
             for i, Tr in enumerate(Ts):
                 if maxwell and i < len(maxwell["rho_l"]):
-                    dev_l = abs(rho_ls[i] - maxwell["rho_l"][i]) / max(maxwell["rho_l"][i], 1e-12)
-                    dev_g = abs(rho_gs[i] - maxwell["rho_g"][i]) / max(maxwell["rho_g"][i], 1e-12)
+                    dev_l = abs(rho_ls[i] - maxwell["rho_l"][i]) / max(
+                        maxwell["rho_l"][i], 1e-12
+                    )
+                    dev_g = abs(rho_gs[i] - maxwell["rho_g"][i]) / max(
+                        maxwell["rho_g"][i], 1e-12
+                    )
                     deviations.append(max(dev_l, dev_g))
             if deviations:
                 summary["max_deviation"] = float(max(deviations))
@@ -425,6 +452,7 @@ def analyze_spurious(results_dir: str) -> dict:
         summary["pass_spurious"] = summary["max_u_max"] < 0.05
     try:
         from lbm_mrt.validation.spurious_currents import plot_spurious
+
         fig_path = os.path.join(results_dir, "fig_spurious.pdf")
         plot_spurious(df, fig_path)
         summary["figure"] = fig_path
@@ -445,6 +473,7 @@ def analyze_poiseuille(results_dir: str) -> dict:
         summary["pass_poiseuille"] = df["R2"].min() >= 0.99
     try:
         from lbm_mrt.validation.poiseuille_sp import plot_poiseuille
+
         fig_path = os.path.join(results_dir, "fig_poiseuille.pdf")
         plot_poiseuille(df, results_dir, fig_path)
         summary["figure"] = fig_path
@@ -465,6 +494,7 @@ def analyze_mesh(results_dir: str) -> dict:
             summary["p_obs"] = float(df["p_obs"].iloc[0])
     try:
         from lbm_mrt.validation.mesh_convergence import plot_mesh_convergence
+
         fig_path = os.path.join(results_dir, "fig_mesh.pdf")
         plot_mesh_convergence(df, fig_path)
         summary["figure"] = fig_path
@@ -486,6 +516,7 @@ ANALYZERS = {
 # ═══════════════════════════════════════════════════════════════════════════
 # Summary report generator
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def make_report_md(
     analysis_results: dict[str, dict],
@@ -527,7 +558,9 @@ def make_report_md(
             ok = r2 >= 0.99
             lp_pass = lp_pass and ok
             lp_metrics.append(f"Tr={key.replace('Tr', '')}: σ={sigma:.4e}, R²={r2:.4f}")
-            lines.append(f"| Laplace ({key}) | {'✅' if ok else '❌'} | R²={r2:.4f} | R² ≥ 0.99 | {'✅' if ok else '❌'} |")
+            lines.append(
+                f"| Laplace ({key}) | {'✅' if ok else '❌'} | R²={r2:.4f} | R² ≥ 0.99 | {'✅' if ok else '❌'} |"
+            )
     if not lp_metrics:
         lines.append("| Laplace | ⚠️ | — | No data | — |")
 
@@ -536,10 +569,14 @@ def make_report_md(
     if dc:
         sigma_ok = dc.get("pass_sigma", False)
         drift_ok = dc.get("pass_drift", False)
-        lines.append(f"| σ-decoupling (σ fit) | {'✅' if sigma_ok else '❌'} | R²={dc.get('sigma_R2', 0):.4f} | R² ≥ 0.99 | {'✅' if sigma_ok else '❌'} |")
+        lines.append(
+            f"| σ-decoupling (σ fit) | {'✅' if sigma_ok else '❌'} | R²={dc.get('sigma_R2', 0):.4f} | R² ≥ 0.99 | {'✅' if sigma_ok else '❌'} |"
+        )
         rho_l_d = dc.get("rho_l_drift", 1)
         rho_g_d = dc.get("rho_g_drift", 1)
-        lines.append(f"| σ-decoupling (ρ drift) | {'✅' if drift_ok else '❌'} | ρ_l={rho_l_d:.4f}, ρ_g={rho_g_d:.4f} | < 1% | {'✅' if drift_ok else '❌'} |")
+        lines.append(
+            f"| σ-decoupling (ρ drift) | {'✅' if drift_ok else '❌'} | ρ_l={rho_l_d:.4f}, ρ_g={rho_g_d:.4f} | < 1% | {'✅' if drift_ok else '❌'} |"
+        )
     else:
         lines.append("| σ-decoupling | ⚠️ | — | No data | — |")
 
@@ -547,7 +584,9 @@ def make_report_md(
     cx = analysis_results.get("coexistence", {})
     if cx:
         cx_ok = cx.get("pass_coex", False)
-        lines.append(f"| Coexistence curve | {'✅' if cx_ok else '❌'} | max Δρ/ρ={cx.get('max_deviation', 1):.4f} | < 2% | {'✅' if cx_ok else '❌'} |")
+        lines.append(
+            f"| Coexistence curve | {'✅' if cx_ok else '❌'} | max Δρ/ρ={cx.get('max_deviation', 1):.4f} | < 2% | {'✅' if cx_ok else '❌'} |"
+        )
     else:
         lines.append("| Coexistence curve | ⚠️ | — | No data | — |")
 
@@ -555,7 +594,9 @@ def make_report_md(
     sp = analysis_results.get("spurious", {})
     if sp:
         sp_ok = sp.get("pass_spurious", False)
-        lines.append(f"| Spurious currents | {'✅' if sp_ok else '❌'} | max\\|u\\|={sp.get('max_u_max', 1):.4e} | < 0.05 | {'✅' if sp_ok else '❌'} |")
+        lines.append(
+            f"| Spurious currents | {'✅' if sp_ok else '❌'} | max\\|u\\|={sp.get('max_u_max', 1):.4e} | < 0.05 | {'✅' if sp_ok else '❌'} |"
+        )
     else:
         lines.append("| Spurious currents | ⚠️ | — | No data | — |")
 
@@ -563,14 +604,18 @@ def make_report_md(
     pp = analysis_results.get("poiseuille", {})
     if pp:
         pp_ok = pp.get("pass_poiseuille", False)
-        lines.append(f"| Poiseuille flow | {'✅' if pp_ok else '❌'} | min R²={pp.get('R2_min', 0):.4f} | R² ≥ 0.99 | {'✅' if pp_ok else '❌'} |")
+        lines.append(
+            f"| Poiseuille flow | {'✅' if pp_ok else '❌'} | min R²={pp.get('R2_min', 0):.4f} | R² ≥ 0.99 | {'✅' if pp_ok else '❌'} |"
+        )
     else:
         lines.append("| Poiseuille flow | ⚠️ | — | P1 (needs solver extension) | — |")
 
     # ── Mesh convergence ──
     mc = analysis_results.get("mesh", {})
     if mc:
-        lines.append(f"| Mesh convergence | {'✅' if mc.get('eps_Q_min', 1) < 0.01 else '⚠️'} | ε_min={mc.get('eps_Q_min', 1):.4e} | ε < 1% | {'✅' if mc.get('eps_Q_min', 1) < 0.01 else '⚠️'} |")
+        lines.append(
+            f"| Mesh convergence | {'✅' if mc.get('eps_Q_min', 1) < 0.01 else '⚠️'} | ε_min={mc.get('eps_Q_min', 1):.4e} | ε < 1% | {'✅' if mc.get('eps_Q_min', 1) < 0.01 else '⚠️'} |"
+        )
     else:
         lines.append("| Mesh convergence | ⚠️ | — | P1 (needs multi-grid) | — |")
 
@@ -585,7 +630,9 @@ def make_report_md(
         if isinstance(data, dict):
             for k, v in data.items():
                 if k.startswith("Tr") and isinstance(v, dict):
-                    lines.append(f"- **{k}**: σ={v.get('sigma', 0):.4e}, R²={v.get('R2', 0):.4f}, n={v.get('n_points', 0)}")
+                    lines.append(
+                        f"- **{k}**: σ={v.get('sigma', 0):.4e}, R²={v.get('R2', 0):.4f}, n={v.get('n_points', 0)}"
+                    )
                 elif k == "figure" and isinstance(v, str) and os.path.exists(v):
                     lines.append(f"- 📊 Figure: `{v}`")
                 elif isinstance(v, (int, float, str, bool)):
@@ -612,26 +659,53 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description="Huang & Wu (2016) SCMP — one-stop validation suite"
     )
-    p.add_argument("--sweep", choices=list(ANALYZERS.keys()),
-                   help="Generate design CSV for the specified parameter sweep")
-    p.add_argument("--all", action="store_true",
-                   help="Run all P0 sweeps (laplace, decoupling, coexistence, spurious)")
-    p.add_argument("--run", action="store_true",
-                   help="Run batch simulation after generating the design CSV")
-    p.add_argument("--analyze", metavar="RESULTS_DIR",
-                   help="Post-process an existing batch results directory")
-    p.add_argument("--report", metavar="RESULTS_DIR",
-                   help="Generate summary report from analyzed results directory")
-    p.add_argument("--out-md", metavar="PATH", default=None,
-                   help="Output path for the summary report .md")
-    p.add_argument("--out-root", metavar="DIR",
-                   help="Output root for batch runs")
-    p.add_argument("--Tr-list", metavar="T1,T2,...", default=None,
-                   help="Comma-separated reduced temperatures (e.g. 0.7,0.9)")
-    p.add_argument("--k1-list", metavar="K1,K2,...", default=None,
-                   help="Comma-separated k₁ values for decoupling sweep")
-    p.add_argument("--app", metavar="PATH", default=BINARY,
-                   help="Path to the SCMP binary")
+    p.add_argument(
+        "--sweep",
+        choices=list(ANALYZERS.keys()),
+        help="Generate design CSV for the specified parameter sweep",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="Run all P0 sweeps (laplace, decoupling, coexistence, spurious)",
+    )
+    p.add_argument(
+        "--run",
+        action="store_true",
+        help="Run batch simulation after generating the design CSV",
+    )
+    p.add_argument(
+        "--analyze",
+        metavar="RESULTS_DIR",
+        help="Post-process an existing batch results directory",
+    )
+    p.add_argument(
+        "--report",
+        metavar="RESULTS_DIR",
+        help="Generate summary report from analyzed results directory",
+    )
+    p.add_argument(
+        "--out-md",
+        metavar="PATH",
+        default=None,
+        help="Output path for the summary report .md",
+    )
+    p.add_argument("--out-root", metavar="DIR", help="Output root for batch runs")
+    p.add_argument(
+        "--Tr-list",
+        metavar="T1,T2,...",
+        default=None,
+        help="Comma-separated reduced temperatures (e.g. 0.7,0.9)",
+    )
+    p.add_argument(
+        "--k1-list",
+        metavar="K1,K2,...",
+        default=None,
+        help="Comma-separated k₁ values for decoupling sweep",
+    )
+    p.add_argument(
+        "--app", metavar="PATH", default=BINARY, help="Path to the SCMP binary"
+    )
     args = p.parse_args()
 
     # ── Report mode ──
@@ -664,7 +738,9 @@ def main() -> None:
                 try:
                     result = analyzer(results_dir)
                     if result.get("n_cases", 0) > 0:
-                        out_json = os.path.join(results_dir, f"analysis_{sweep_name}.json")
+                        out_json = os.path.join(
+                            results_dir, f"analysis_{sweep_name}.json"
+                        )
                         with open(out_json, "w") as f:
                             json.dump(result, f, indent=2, default=str)
                         print(f"[analyze] Saved → {out_json}")
@@ -707,15 +783,25 @@ def main() -> None:
         print("\n┌──────────────────────────────────────────────────────────┐")
         print("│  Quick start                                             │")
         print("│  1. All-in-one P0:                                       │")
-        print("│     uv run python scripts/06_run_huang_validation_suite.py --all --run  │")
+        print(
+            "│     uv run python scripts/06_run_huang_validation_suite.py --all --run  │"
+        )
         print("│  2. Single sweep:                                        │")
-        print("│     uv run python scripts/06_run_huang_validation_suite.py --sweep laplace --run  │")
+        print(
+            "│     uv run python scripts/06_run_huang_validation_suite.py --sweep laplace --run  │"
+        )
         print("│  3. Manual batch run:                                    │")
-        print("│     uv run lbm-batch --csv data/design_scmp_laplace.csv --app lbm_mrt/solver/mcmp_huang_256  │")
+        print(
+            "│     uv run lbm-batch --csv data/design_scmp_laplace.csv --app lbm_mrt/solver/mcmp_huang_256  │"
+        )
         print("│  4. Analyze + report:                                    │")
-        print("│     uv run python scripts/06_run_huang_validation_suite.py --analyze results/...  │")
+        print(
+            "│     uv run python scripts/06_run_huang_validation_suite.py --analyze results/...  │"
+        )
         print("│  5. Report only:                                         │")
-        print("│     uv run python scripts/06_run_huang_validation_suite.py --report results/...  │")
+        print(
+            "│     uv run python scripts/06_run_huang_validation_suite.py --report results/...  │"
+        )
         print("└──────────────────────────────────────────────────────────┘")
         return
 
@@ -731,7 +817,9 @@ def main() -> None:
 
     generators = {
         "laplace": lambda p: generate_laplace_design(p, tr_list=tr_list),
-        "decoupling": lambda p: generate_decoupling_design(p, tr=0.70 if tr_list is None else tr_list[0], k1_list=k1_list),
+        "decoupling": lambda p: generate_decoupling_design(
+            p, tr=0.70 if tr_list is None else tr_list[0], k1_list=k1_list
+        ),
         "coexistence": lambda p: generate_coexistence_design(p, tr_list=tr_list),
         "spurious": lambda p: generate_spurious_design(p),
         "poiseuille": lambda p: generate_poiseuille_design(p, tr_list=tr_list),
@@ -747,7 +835,9 @@ def main() -> None:
     if args.run:
         out_roots: dict[str, str] = {}
         for sweep_name, design_path in design_paths.items():
-            out_roots[sweep_name] = run_batch_sweep(design_path, args.out_root, app=args.app)
+            out_roots[sweep_name] = run_batch_sweep(
+                design_path, args.out_root, app=args.app
+            )
 
         # Auto-analyze all after run
         print("\n[auto-analyze] Post-processing all sweeps...")
@@ -772,7 +862,9 @@ def main() -> None:
     else:
         for sweep_name in sweeps_to_run:
             print(f"\nTo run the {sweep_name} sweep:")
-            print(f"  uv run lbm-batch --csv {design_paths[sweep_name]} --app {args.app}")
+            print(
+                f"  uv run lbm-batch --csv {design_paths[sweep_name]} --app {args.app}"
+            )
 
 
 if __name__ == "__main__":

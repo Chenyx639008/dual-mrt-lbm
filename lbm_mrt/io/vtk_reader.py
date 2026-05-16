@@ -35,9 +35,7 @@ def read_vtk_scalars(vtk_path: str) -> tuple[dict[str, np.ndarray], int, int]:
 
     # Parse grid dimensions from the ASCII header
     header_str = data[:header_end].decode("ascii", "ignore")
-    dims_line = next(
-        ln for ln in header_str.split("\n") if ln.startswith("DIMENSIONS")
-    )
+    dims_line = next(ln for ln in header_str.split("\n") if ln.startswith("DIMENSIONS"))
     nx, ny, _ = map(int, dims_line.split()[1:4])
 
     fields: dict[str, np.ndarray] = {}
