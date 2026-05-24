@@ -7,100 +7,157 @@
 #include "hydrate.h"
 #endif
 
-// 统一的运行参数：把 params.txt 与本次 run 强相关的“动态常量”集中起来
+// Runtime default parameters for the LBM solver.
+//
+// This struct holds ALL runtime-settable parameters.  Every field has a
+// built-in default, so you can construct RuntimeParams{} and get a sensible
+// configuration.  When load_params_txt("params.txt") is called, only keys
+// found in the file override the defaults; unspecified keys keep their
+// default value from this struct.
+//
+// Organisation (top → bottom):
+//   A. Common physics (lattice + body force)
+//   B. MCMP two-phase (legacy Li model) — not used by SCMP builds
+//   C. Huang & Wu (2016) SCMP            — not used by legacy MCMP builds
+//   D. Checkpoint / I/O
+//   E. Steady-monitor tolerances
+//   F. Hydrate extension (gated by HYDRATE_ENABLE)
+//
 struct RuntimeParams {
-  // 几何/赋存形态
-  int    init_eq = 1;            // 0=手动；1/2=使用预设组
-  int    drive   = 1;            // 预留（与 drive_mode 概念不同，先占位）
 
-  int    morph = 2;                    // 1=pore-fill, 2=coating, 3=mixed
+  // ═══════════════════════════════════════════════════════════════════
+  // A. Common physics — used by BOTH MCMP and SCMP
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Body force (gravity / pressure-gradient drive)
+  double Gx = 1e-5, Gy = 0.0;
+  int    drive_mode = 1;        // 0=off, 1=constant G applied
+
+  // ═══════════════════════════════════════════════════════════════════
+  // B. MCMP two-phase (legacy Li pseudopotential model)
+  //    Fields used ONLY by mcmp_sim (non-HUANG_256_BUILD path).
+  //    Kept here so the mcmp_sim binary still compiles.
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Geometry & morphology (porous-medium obstacle generation)
+  int    init_eq = 1;           // 0=manual; 1/2=preset groups
+  int    morph  = 2;            // 1=pore-fill, 2=coating, 3=mixed
   double r_obs = 20.0, l_gap = 20.0;
   double coat_thick = 6.0, r_mid = 6.0;
 
-  // 初始/润湿
+  // Wettability
   double Sw = 0.3;
   unsigned long long water_seed = 1234567ULL;
   double thetaA_quartz_deg = 30.0, thetaA_hydrate_deg = 80.0;
   double GBw_quartz = 0, GBw_hydrate = 0;
-  // —— 接触角 → GAw 的线性映射：GAw = m * (thetaA - c) ——
-  double GAw_m = 1.0 / 456.69;   // 默认（旧公式）的斜率
-  double GAw_c = 86.41;          // 默认（旧公式）的中心值 theta*
+  double GAw_m = 1.0 / 456.69;   // GAw = m·(thetaA − c)
+  double GAw_c = 86.41;
 
-
-  // 驱动/物性（注意：tau_p_* 应 > 0.5）
-  double Gx = 1e-5, Gy = 0.0; int drive_mode = 1;
+  // Phase densities & shear relaxation (two-component)
   double rhoA_hi = 6.6293, rhoA_lo = 0.34127;
   double rhoB_hi = 0.3823,  rhoB_lo = 0.0001;
-    // —— Sw 极端时（0 或 1）使用的密度覆盖 —— //
-  // Sw=0 : A取 rhoA_in_gas_0, B取 rhoB_in_gas_0
-  // Sw=1 : A取 rhoA_in_liq_1, B取 rhoB_in_liq_1
   double rhoA_ini_h_1 = 7.2243;
   double rhoA_ini_l_0 = 0.0;
   double rhoB_ini_l_1 = 0.0;
   double rhoB_ini_h_0 = 0.2363;
+  double tau_p_a = 1.0, tau_p_b = 1.0;
 
-
-  double tau_p_a = 1.0, tau_p_b = 1;
-
-  // 界面/相互作用新增
+  // Interaction & interfacial parameters
   double GAB   = 0.24;
   double GBA   = 0.24;
   double sigmaA= 0.11;
   double kappa = 0.6;
 
-  // ── Huang & Wu (2016) SCMP 参数 ──
-  int    pp_mode      = 0;           // 0=legacy MCMP, 1=Huang SCMP
-  double k1_huang     = 1.0 / 6.0;   // 表面张力 knob (Eq. 59-62)
-  double k2_huang     = 0.0;         // 二阶 σ 参量
-  double kd_huang     = -1.0 / 12.0; // 密度比参量 (Eq. 59)
-  double alpha_meq    = 1.0;         // meq[1] 系数 (Eq. 5)
-  double cs_a         = 1.0;         // Carnahan-Starling a (plan default)
-  double cs_b         = 4.0;         // Carnahan-Starling b
-  double cs_R         = 1.0;         // Carnahan-Starling R
-  double cs_T         = 0.9;         // Carnahan-Starling reduced temperature T/Tc (paper: 0.9)
-  double cs_G         = -1.0;        // Carnahan-Starling G 参数
-  double huang_R0     = 40.0;        // 初始液滴半径
-  double huang_xc     = 128.0;       // 初始液滴中心 x
-  double huang_yc     = 128.0;       // 初始液滴中心 y
-  double huang_W      = 3.0;         // 界面厚度
-  int    huang_init_mode = 1;        // 1=droplet, 2=flat interface
-  double huang_rho_g  = 0.0;         // 共存气相密度（0=从init kernel估算）
-  double huang_rho_l  = 0.0;         // 共存液相密度（0=从init kernel估算）
-  double G_ads_scmp   = 0.0;         // SCMP 吸附力 G_ads（非零时直接设 GAw[1]；用于接触角标定）
-  double theta_contact_deg = 90.0;    // ψ-based contact angle target (°)
-  double tau_huang     = 1.5;         // SCMP relaxation time τ (paper: τ=1.5)
-  double Lambda_huang  = 1.0/12.0;    // Λ for s_q formula (paper: 1/12)
+  // Geometry file (Tecplot .plt) — if non-empty, overrides built-in obstacle gen
+  std::string geom_file = "";
 
-  // 断点控制
-  int CP_EVERY = 50000;     // 每多少步存一次档；建议 eq 阶段 5000~20000，flow 阶段 10000+
-  int CP_KEEP  = 2;     // 保留最近 N 份
-  int CP_RESUME = 1;    // 尝试从最新档恢复（1=是，0=否）
+  // ═══════════════════════════════════════════════════════════════════
+  // C. Huang & Wu (2016) single-component multiphase (SCMP)
+  //    Fields used ONLY by mcmp_huang_* (HUANG_256_BUILD path).
+  // ═══════════════════════════════════════════════════════════════════
 
-  // ===== 总阀门（新增）=====
-  bool ENABLE_CKPT       = true;  // 一键控制 checkpoint 的读/写
+  // Solver mode — note: SCMP binary (HUANG_256_BUILD) always dispatches to
+  // run_scmp_huang() regardless of this flag.  It exists for documentation
+  // and for a potential unified binary in the future.
+  int    pp_mode      = 0;       // 0=legacy MCMP, 1=Huang SCMP
 
-  // 运行目录（统一进入参数源，避免文件级全局状态）
+  // — Carnahan-Starling EOS parameters —
+  double cs_a         = 1.0;     // attraction parameter a
+  double cs_b         = 4.0;     // co-volume parameter b
+  double cs_R         = 1.0;     // specific gas constant R
+  double cs_T         = 0.9;     // reduced temperature Tr = T/Tc  (Tc ≈ 0.09433)
+  double cs_G         = -1.0;    // interaction strength G  (negative = attractive)
+
+  // — Surface-tension knob via paper Eq. 59–62:  ε = −8(k₁ + k₂) —
+  // User sets ε (and optionally k₂).  Internally:
+  //   k₁ = −ε/8 − k₂,   k₂ = user-supplied (default 0).
+  //   σ ∝ (1 − 6k₁)  independent of k₂  (paper Fig. 5's core claim).
+  // Default ε = −2/3, k₂ = 0  ⇔  k₁ = 1/12  (half surface tension).
+  // Range: ε ∈ (−4/3, +∞), k₂ ∈ (−∞, +∞)  (k₁ kept within [−∞, 1/6)).
+  double epsilon_huang = -2.0 / 3.0;
+  double k2_huang      = 0.0;      // set ≠0 only for paper Fig.5 σ⟂k₂ verification
+
+  // — MRT equilibrium-moment coefficient (Eq. 5) —
+  double alpha_meq    = 1.0;     // α in meq[1] = (−2 + 3α|u|²)ρ
+
+  // — Initial condition geometry —
+  double huang_R0     = 40.0;    // droplet radius / flat-interface position
+  double huang_xc     = 128.0;   // droplet centre x
+  double huang_yc     = 128.0;   // droplet centre y
+  double huang_W      = 3.0;     // interface width (tanh thickness)
+  int    huang_init_mode = 1;    // 1=droplet (periodic), 2=flat interface,
+                                 // 3=uniform liquid (channel), 4=droplet on wall
+
+  // — Coexistence density injection —
+  // Set these from host-side Maxwell construction; 0.0 = let GPU estimate.
+  double huang_rho_g  = 0.0;     // gas coexistence density
+  double huang_rho_l  = 0.0;     // liquid coexistence density
+
+  // — Adsorption / contact angle (SCMP path) —
+  double G_ads_scmp       = 0.0; // Yang/Li-style G_ads·ψ adsorption force
+  double theta_contact_deg = 90.0; // target contact angle (°) for ψ-based ghost BC
+  double huang_psi_l_ref  = 0.15; // liquid reference ψ for cos²(θ/2) interpolation
+  double huang_psi_g_ref  = 0.01; // gas reference ψ for cos²(θ/2) interpolation
+
+  // — MRT relaxation —
+  double tau_huang     = 1.5;         // τ (paper: τ = 1.5)
+  double Lambda_huang  = 1.0 / 12.0; // Λ for s_q formula (paper: Λ = 1/12)
+
+  // — Numerical guards (rarely need tuning) —
+  double huang_u_max      = 0.15; // velocity cap  (|u| > UMAX → clipped)
+  double huang_psi_cut    = 1e-3; // ψ² floor for Q_m denominator
+  double huang_tanh_factor = 2.0; // init profile steepness  tanh(factor·(R0−r)/W)
+  double huang_rho_max_init = 1.0;// init density upper clamp
+
+  // ═══════════════════════════════════════════════════════════════════
+  // D. Checkpoint / I/O control
+  // ═══════════════════════════════════════════════════════════════════
+
+  int CP_EVERY = 50000;     // checkpoint interval (steps)
+  int CP_KEEP  = 2;         // number of recent checkpoints to retain
+  int CP_RESUME = 1;        // 1 = attempt to resume from latest checkpoint
+  bool ENABLE_CKPT = true;  // master on/off for checkpoint read/write
+
   std::string ckpt_dir = "data/ckpt";
   std::string file_dir = "data/file";
 
-  // 统一输出频率（避免散落硬编码）
-  int OUTPUT_EVERY = static_cast<int>(NOUTPUT);
+  int OUTPUT_EVERY = static_cast<int>(NOUTPUT);  // VTK output interval
 
-  // 两阶段稳态判据（避免 run_equilibrate_then_flow 内硬编码）
-  double eq_tol_rel = 1e-4;
+  // ═══════════════════════════════════════════════════════════════════
+  // E. Steady-monitor tolerances
+  // ═══════════════════════════════════════════════════════════════════
+
+  double eq_tol_rel    = 1e-4;
   int    eq_need_consec = 2;
-  int    eq_max_steps = 200000;
-  double eq_q_abs_eps = 1e-6;
+  int    eq_max_steps  = 200000;
+  double eq_q_abs_eps  = 1e-6;
 
-  double flow_tol_rel = 1e-4;
+  double flow_tol_rel     = 1e-4;
   int    flow_need_consec = 3;
-  int    flow_max_steps = static_cast<int>(NSTEPS);
+  int    flow_max_steps   = static_cast<int>(NSTEPS);
 
-  // 参数来源说明（用于“最终生效值与来源”打印）
+  // Parameter-source annotation (for "final value & origin" printout)
   std::string source_note = "defaults";
-
-  // 新增：几何文件名（若非空则从 Tecplot 读几何）
-  std::string geom_file = "";          // 例如 "geometry_case001.plt"
 
 #ifdef HYDRATE_ENABLE
   // ===== 水合物相变扩展参数 =====

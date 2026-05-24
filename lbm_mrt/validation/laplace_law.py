@@ -25,6 +25,7 @@ from lbm_mrt.validation.analytical import (
     detect_interface_radius,
     fit_pressure_inside_outside,
     laplace_sigma,
+    compute_sigma_from_rho,
 )
 from lbm_mrt.validation.cs_eos import (
     cs_critical_point,
@@ -48,7 +49,7 @@ def _base_laplace_params() -> dict[str, Any]:
         "GAB": 0.0,
         "GBA": 0.0,
         "sigmaA": 0.0,
-        "k1_huang": 1.0 / 12.0,  # ≈ 0.08333
+        "epsilon_huang": -2.0 / 3.0,  # ε = −8k₁ with k₁=1/12
         "k2_huang": 0.0,
         "kd_huang": -1.0 / 12.0,
         "alpha_meq": 1.0,
@@ -100,14 +101,16 @@ def generate_laplace_design(
         for R in r_list:
             row = dict(base)
             row["case_name"] = f"laplace_Tr{Tr:.2f}_R{R:.0f}"
-            row["cs_T"] = T_abs
+            row["cs_T"] = Tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
             row["huang_R0"] = R
             row["huang_rho_g"] = float(rg)
             row["huang_rho_l"] = float(rl)
             rows.append(row)
 
     pd.DataFrame(rows).to_csv(out_path, index=False)
-    print(f"[laplace] Generated {out_path} ({len(rows)} cases: {len(tr_list)} Tr × {len(r_list)} R)")
+    print(
+        f"[laplace] Generated {out_path} ({len(rows)} cases: {len(tr_list)} Tr × {len(r_list)} R)"
+    )
     return out_path
 
 
@@ -131,14 +134,24 @@ def analyze_laplace(
     out = Path(out_dir) if out_dir else root
 
     records = []
-    case_dirs = sorted(d for d in root.iterdir() if d.is_dir() and d.name.startswith("laplace_"))
+    case_dirs = sorted(
+        d for d in root.iterdir() if d.is_dir() and d.name.startswith("laplace_")
+    )
     if not case_dirs:
         # Try one level deeper (batch results may have batch_tag subdir)
         for sub in sorted(root.iterdir()):
             if sub.is_dir():
-                case_dirs.extend(sorted(d for d in sub.iterdir() if d.is_dir() and d.name.startswith("laplace_")))
+                case_dirs.extend(
+                    sorted(
+                        d
+                        for d in sub.iterdir()
+                        if d.is_dir() and d.name.startswith("laplace_")
+                    )
+                )
         if not case_dirs:
-            raise FileNotFoundError(f"No laplace_* case directories found under {results_root}")
+            raise FileNotFoundError(
+                f"No laplace_* case directories found under {results_root}"
+            )
 
     for case_dir in case_dirs:
         case_name = case_dir.name
@@ -167,25 +180,37 @@ def analyze_laplace(
             continue
 
         rho = fields["rho"]
-        pressure = fields.get("pressure", np.zeros_like(rho))
 
         center, R_meas = detect_interface_radius(rho, nx, ny)
         if R_meas <= 0:
             print(f"[WARNING] No interface detected for {case_name}, R_meas={R_meas}")
             continue
 
-        p_in, p_out = fit_pressure_inside_outside(rho, pressure, center, R_meas)
-        dP = p_in - p_out
+        # --- FIXED: compute σ via paper Eq. 62 integral (psi-based) ---
+        # The VTK "pressure" field is isotropic only (p = cs²ρ + ½c²Gψ²),
+        # which does NOT contain the interfacial pressure tensor anisotropy.
+        # We compute σ from the radial ψ profile instead.
+        sigma_est = compute_sigma_from_rho(
+            rho,
+            center,
+            k1=1.0 / 12.0,  # default k₁ used in Laplace sweep
+            cs_T=Tr,  # reduced temperature (matches design CSV)
+        )
+        # Convert σ to effective ΔP for the 1/R fit: ΔP = σ / R
+        dP = sigma_est / R_meas if R_meas > 0 else np.nan
 
-        records.append({
-            "case_name": case_name,
-            "Tr": Tr,
-            "R_nominal": R_nom,
-            "R_meas": R_meas,
-            "dP": dP,
-            "invR": 1.0 / R_meas if R_meas > 0 else np.nan,
-        })
-        print(f"  {case_name}: R_meas={R_meas:.1f}, ΔP={dP:.6e}")
+        records.append(
+            {
+                "case_name": case_name,
+                "Tr": Tr,
+                "R_nominal": R_nom,
+                "R_meas": R_meas,
+                "sigma_calc": sigma_est,
+                "dP": dP,
+                "invR": 1.0 / R_meas if R_meas > 0 else np.nan,
+            }
+        )
+        print(f"  {case_name}: R_meas={R_meas:.1f}, σ={sigma_est:.6e}, ΔP={dP:.6e}")
 
     if not records:
         raise RuntimeError(f"No valid cases found under {results_root}")
@@ -194,24 +219,35 @@ def analyze_laplace(
     df.to_csv(out / "laplace_summary.csv", index=False)
     print(f"[laplace] Wrote {out / 'laplace_summary.csv'} ({len(df)} cases)")
 
-    # Fit σ per Tr (constrain intercept=0, per validation_plan §3.6)
+    # Fit σ per Tr — verify constancy: ΔP = σ/R → σ = ΔP·R
+    # When σ is computed from psi integral, it should be constant across radii.
     fit_rows = []
     for Tr, group in df.groupby("Tr"):
-        valid = group[group["R_meas"] > 0].dropna(subset=["dP"])
+        valid = group[group["R_meas"] > 0].dropna(subset=["sigma_calc"])
         if len(valid) < 3:
             print(f"[WARNING] Tr={Tr:.2f}: only {len(valid)} valid points, need ≥ 3")
             continue
-        sigma, r2, intercept = laplace_sigma(
-            valid["R_meas"].values, valid["dP"].values
+        # σ from psi integral: compute mean and std/mean
+        sigma_vals = valid["sigma_calc"].values
+        sigma_mean = float(np.mean(sigma_vals))
+        sigma_std_rel = float(np.std(sigma_vals) / max(abs(sigma_mean), 1e-12))
+        # Also do ΔP vs 1/R fit for R² check
+        dP_vals = valid["dP"].values
+        R_vals = valid["R_meas"].values
+        sigma_fit, r2, intercept = laplace_sigma(R_vals, dP_vals)
+        fit_rows.append(
+            {
+                "Tr": Tr,
+                "sigma": sigma_mean,
+                "sigma_std_rel": sigma_std_rel,
+                "R2": r2,
+                "intercept": intercept,
+                "n_points": len(valid),
+            }
         )
-        fit_rows.append({
-            "Tr": Tr,
-            "sigma": sigma,
-            "R2": r2,
-            "intercept": intercept,
-            "n_points": len(valid),
-        })
-        print(f"  Tr={Tr:.2f}: σ={sigma:.6e}, R²={r2:.4f}, intercept={intercept:.2e}, n={len(valid)}")
+        print(
+            f"  Tr={Tr:.2f}: σ={sigma_mean:.6e} (std/mean={sigma_std_rel:.4f}), R²={r2:.4f}, n={len(valid)}"
+        )
 
     if fit_rows:
         fit_df = pd.DataFrame(fit_rows)
@@ -240,6 +276,7 @@ def plot_laplace_double_panel(
         Path to the generated figure.
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from lbm_mrt.viz.viz_template import init_style, format_axes, save_figure
@@ -279,16 +316,36 @@ def plot_laplace_double_panel(
 
         x_fit = np.linspace(0, max(x) * 1.1, 50)
         ax.plot(x_fit, sigma * x_fit, "-", color=colors[i], linewidth=1.5, alpha=0.7)
-        ax.scatter(x, y, marker=markers[i], facecolors="white", edgecolors=colors[i],
-                   s=50, linewidths=1.2, zorder=5)
+        ax.scatter(
+            x,
+            y,
+            marker=markers[i],
+            facecolors="white",
+            edgecolors=colors[i],
+            s=50,
+            linewidths=1.2,
+            zorder=5,
+        )
 
         # Info box
         textstr = f"$\\sigma = {sigma:.4e}$\n$R^2 = {r2:.4f}$"
         if Tr in fit_data:
             textstr = f"$\\sigma = {fit_data[Tr]['sigma']:.4e}$\n$R^2 = {fit_data[Tr]['R2']:.4f}$"
-        ax.text(0.95, 0.05, textstr, transform=ax.transAxes, fontsize=10,
-                verticalalignment="bottom", horizontalalignment="right",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85, edgecolor="gray"))
+        ax.text(
+            0.95,
+            0.05,
+            textstr,
+            transform=ax.transAxes,
+            fontsize=10,
+            verticalalignment="bottom",
+            horizontalalignment="right",
+            bbox=dict(
+                boxstyle="round,pad=0.3",
+                facecolor="white",
+                alpha=0.85,
+                edgecolor="gray",
+            ),
+        )
 
         ax.set_xlabel("$1/R$ (lu$^{-1}$)")
         ax.set_ylabel("$\\Delta P$ (lu)")

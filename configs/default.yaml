@@ -64,7 +64,7 @@ relaxation:
 # ── Huang & Wu (2016) SCMP (single-component multiphase) ─────────────────
 huang_scmp:
   pp_mode: 0          # 0=legacy MCMP (PR+ideal), 1=Huang SCMP (Carnahan-Starling)
-  k1_huang: 0.1666667 # surface-tension knob (1/6=no tension; ~0 gives max tension)
+  epsilon_huang: -1.333333 # ε = −8·k₁,  k₁=1/6 → σ=0
   k2_huang: 0.0       # second-order sigma parameter
   kd_huang: -0.083333 # density ratio parameter (-1/12)
   alpha_meq: 1.0      # meq[1] coefficient (Eq. 5)

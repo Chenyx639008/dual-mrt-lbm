@@ -25,6 +25,8 @@ from lbm_mrt.io.vtk_reader import latest_vtk, read_vtk_scalars
 from lbm_mrt.validation.analytical import (
     detect_interface_radius,
     fit_pressure_inside_outside,
+    extract_rho_l_g,
+    compute_sigma_from_rho,
 )
 from lbm_mrt.validation.cs_eos import (
     cs_critical_point,
@@ -94,10 +96,11 @@ def generate_decoupling_design(
     base = _base_decoupling_params()
     rows = []
     for k1 in k1_list:
+        eps = -8.0 * k1
         row = dict(base)
-        row["case_name"] = f"decoupling_Tr{tr:.2f}_k1{k1:.4f}"
-        row["cs_T"] = T_abs
-        row["k1_huang"] = k1
+        row["case_name"] = f"decoupling_Tr{tr:.2f}_eps{eps:.4f}"
+        row["cs_T"] = tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
+        row["epsilon_huang"] = eps  # ε = −8k₁
         row["huang_rho_g"] = float(rg)
         row["huang_rho_l"] = float(rl)
         rows.append(row)
@@ -129,22 +132,33 @@ def analyze_decoupling(
     out = Path(out_dir) if out_dir else root
 
     records = []
-    case_dirs = sorted(d for d in root.iterdir() if d.is_dir() and d.name.startswith("decoupling_"))
+    case_dirs = sorted(
+        d for d in root.iterdir() if d.is_dir() and d.name.startswith("decoupling_")
+    )
     if not case_dirs:
         for sub in sorted(root.iterdir()):
             if sub.is_dir():
-                case_dirs.extend(sorted(d for d in sub.iterdir() if d.is_dir() and d.name.startswith("decoupling_")))
+                case_dirs.extend(
+                    sorted(
+                        d
+                        for d in sub.iterdir()
+                        if d.is_dir() and d.name.startswith("decoupling_")
+                    )
+                )
         if not case_dirs:
-            raise FileNotFoundError(f"No decoupling_* case directories under {results_root}")
+            raise FileNotFoundError(
+                f"No decoupling_* case directories under {results_root}"
+            )
 
     for case_dir in case_dirs:
         case_name = case_dir.name
-        # Parse k1: decoupling_Tr0.70_k10.0500
+        # Parse epsilon: decoupling_Tr0.70_eps-0.4000
         try:
-            k1_str = case_name.split("_k1")[-1]
-            k1 = float(k1_str)
+            eps_str = case_name.split("_eps")[-1]
+            eps = float(eps_str)
+            k1 = -eps / 8.0  # recover k₁ from ε = −8k₁
         except (ValueError, IndexError):
-            print(f"[WARNING] Cannot parse k1 from: {case_name}, skipping")
+            print(f"[WARNING] Cannot parse epsilon from: {case_name}, skipping")
             continue
 
         vtk_dir = case_dir / "outputdata_scmp"
@@ -160,33 +174,38 @@ def analyze_decoupling(
             continue
 
         rho = fields["rho"]
-        pressure = fields.get("pressure", np.zeros_like(rho))
 
         center, R_meas = detect_interface_radius(rho, nx, ny)
         if R_meas <= 0:
             print(f"[WARNING] No interface detected for {case_name}")
             continue
 
-        p_in, p_out = fit_pressure_inside_outside(rho, pressure, center, R_meas)
-        sigma = (p_in - p_out) * R_meas  # single-R estimate
+        # --- FIXED: compute σ via paper Eq. 62 integral (psi-based) ---
+        # Uses each case's actual k₁ value for correct (1−6k₁) scaling.
+        sigma = compute_sigma_from_rho(
+            rho,
+            center,
+            k1=k1,  # each decoupling case has different k₁
+            cs_T=0.70,  # Tr=0.70 for decoupling sweep
+        )
 
-        # Extract plateau densities
-        rho_vals = rho.flatten()
-        rho_sorted = np.sort(rho_vals)
-        n = len(rho_sorted)
-        rho_g = float(np.mean(rho_sorted[: max(1, int(0.05 * n))]))
-        rho_l = float(np.mean(rho_sorted[-max(1, int(0.05 * n)):]))
+        # Extract plateau densities using adaptive method
+        rho_l, rho_g = extract_rho_l_g(rho, ny)
 
-        records.append({
-            "case_name": case_name,
-            "k1": k1,
-            "one_minus_6k1": 1.0 - 6.0 * k1,
-            "sigma": sigma,
-            "rho_l": rho_l,
-            "rho_g": rho_g,
-            "R_meas": R_meas,
-        })
-        print(f"  {case_name}: k₁={k1:.4f}, σ={sigma:.6e}, ρ_l={rho_l:.4f}, ρ_g={rho_g:.4f}")
+        records.append(
+            {
+                "case_name": case_name,
+                "k1": k1,
+                "one_minus_6k1": 1.0 - 6.0 * k1,
+                "sigma": sigma,
+                "rho_l": rho_l,
+                "rho_g": rho_g,
+                "R_meas": R_meas,
+            }
+        )
+        print(
+            f"  {case_name}: k₁={k1:.4f}, σ={sigma:.6e}, ρ_l={rho_l:.6f}, ρ_g={rho_g:.6f}"
+        )
 
     if not records:
         raise RuntimeError(f"No valid cases found under {results_root}")
@@ -211,7 +230,11 @@ def analyze_decoupling(
         rho_g_std_rel = float(valid["rho_g"].std() / max(valid["rho_g"].mean(), 1e-12))
         print(f"[decoupling] ρ_l drift (std/mean): {rho_l_std_rel:.4f}")
         print(f"[decoupling] ρ_g drift (std/mean): {rho_g_std_rel:.4f}")
-        print(f"  PASS: drift < 1%" if max(rho_l_std_rel, rho_g_std_rel) < 0.01 else f"  FAIL: drift ≥ 1%")
+        print(
+            f"  PASS: drift < 1%"
+            if max(rho_l_std_rel, rho_g_std_rel) < 0.01
+            else f"  FAIL: drift ≥ 1%"
+        )
 
     return df
 
@@ -234,6 +257,7 @@ def plot_decoupling(
         Path to the generated figure.
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from lbm_mrt.viz.viz_template import init_style, format_axes, save_figure
@@ -254,17 +278,33 @@ def plot_decoupling(
 
     x_fit = np.linspace(0, max(x) * 1.1, 50)
     ax1.plot(x_fit, slope * x_fit, "-", color="#2166AC", linewidth=1.5, alpha=0.5)
-    ax1.scatter(x, y, marker="o", facecolors="white", edgecolors="#2166AC",
-                s=60, linewidths=1.2, zorder=5)
+    ax1.scatter(
+        x,
+        y,
+        marker="o",
+        facecolors="white",
+        edgecolors="#2166AC",
+        s=60,
+        linewidths=1.2,
+        zorder=5,
+    )
 
     # Annotate k₁ values
     for _, row in valid.iterrows():
-        ax1.annotate(f"$k_1={row['k1']:.3f}$", (row["one_minus_6k1"], row["sigma"]),
-                     textcoords="offset points", xytext=(8, -4), fontsize=7, alpha=0.7)
+        ax1.annotate(
+            f"$k_1={row['k1']:.3f}$",
+            (row["one_minus_6k1"], row["sigma"]),
+            textcoords="offset points",
+            xytext=(8, -4),
+            fontsize=7,
+            alpha=0.7,
+        )
 
     ax1.set_xlabel("$1 - 6k_1$")
     ax1.set_ylabel("$\\sigma$ (lu)")
-    ax1.set_title(f"(a) $\\sigma \\propto (1-6k_1)$\nslope$={slope:.4e}$, $R^2={r2:.4f}$")
+    ax1.set_title(
+        f"(a) $\\sigma \\propto (1-6k_1)$\nslope$={slope:.4e}$, $R^2={r2:.4f}$"
+    )
 
     # ── Panel (b): ρ_l, ρ_g drift ──
     k1_vals = valid["k1"].values
@@ -278,8 +318,22 @@ def plot_decoupling(
 
     x_pos = np.arange(len(k1_vals))
     width = 0.35
-    bars1 = ax2.bar(x_pos - width / 2, rho_l_drift, width, color="#B2182B", alpha=0.7, label="$\\rho_l$")
-    bars2 = ax2.bar(x_pos + width / 2, rho_g_drift, width, color="#2166AC", alpha=0.7, label="$\\rho_g$")
+    bars1 = ax2.bar(
+        x_pos - width / 2,
+        rho_l_drift,
+        width,
+        color="#B2182B",
+        alpha=0.7,
+        label="$\\rho_l$",
+    )
+    bars2 = ax2.bar(
+        x_pos + width / 2,
+        rho_g_drift,
+        width,
+        color="#2166AC",
+        alpha=0.7,
+        label="$\\rho_g$",
+    )
     ax2.axhline(y=0, color="gray", linewidth=0.5)
     ax2.axhline(y=1, color="red", linestyle="--", linewidth=0.5, alpha=0.5)
     ax2.axhline(y=-1, color="red", linestyle="--", linewidth=0.5, alpha=0.5)

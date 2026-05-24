@@ -46,7 +46,7 @@ def analyze_mesh_convergence(
     results_root: str,
     out_dir: str | None = None,
     tr: float = 0.70,
-    tau: float = 1.0,
+    tau: float = 1.5,  # matches tau_huang in configs/huang_scmp.yaml (MRT τ=1.5)
     Fb_ref: float = 5e-9,
     h_ref: float = 198.0,  # reference half-channel for NY=200
 ) -> pd.DataFrame:
@@ -77,8 +77,12 @@ def analyze_mesh_convergence(
     nu = (tau - 0.5) / 3.0
 
     records = []
-    case_dirs = sorted(d for d in root.iterdir() if d.is_dir() and
-                       (d.name.startswith("mesh_") or d.name.startswith("poiseuille_")))
+    case_dirs = sorted(
+        d
+        for d in root.iterdir()
+        if d.is_dir()
+        and (d.name.startswith("mesh_") or d.name.startswith("poiseuille_"))
+    )
 
     for case_dir in case_dirs:
         vtk_dir = case_dir / "outputdata_scmp"
@@ -105,16 +109,18 @@ def analyze_mesh_convergence(
         Q_an = np.sum(u_an)
         eps_Q = abs(Q_lbm - Q_an) / max(abs(Q_an), 1e-12)
 
-        records.append({
-            "case_name": case_dir.name,
-            "NY": ny,
-            "NX": nx,
-            "b": b,
-            "Fb": Fb,
-            "Q_lbm": Q_lbm,
-            "Q_an": Q_an,
-            "eps_Q": eps_Q,
-        })
+        records.append(
+            {
+                "case_name": case_dir.name,
+                "NY": ny,
+                "NX": nx,
+                "b": b,
+                "Fb": Fb,
+                "Q_lbm": Q_lbm,
+                "Q_an": Q_an,
+                "eps_Q": eps_Q,
+            }
+        )
         print(f"  {case_dir.name}: NY={ny}, ε_Q={eps_Q:.4e}")
 
     if not records:
@@ -122,7 +128,9 @@ def analyze_mesh_convergence(
 
     df = pd.DataFrame(records).sort_values("NY")
 
-    # Richardson extrapolation
+    # Richardson extrapolation — dataset-level metadata
+    p_obs = np.nan
+    GCI = np.nan
     if len(df) >= 3:
         ny_vals = df["NY"].values
         eps_vals = df["eps_Q"].values
@@ -130,31 +138,40 @@ def analyze_mesh_convergence(
         log_eps = np.log(np.maximum(eps_vals, 1e-15))
         coeffs = np.polyfit(log_ny, log_eps, 1)
         p_obs = -coeffs[0]
-        print(f"[mesh] Observed convergence order p_obs = {p_obs:.2f} (theoretical MRT p=2)")
+        print(
+            f"[mesh] Observed convergence order p_obs = {p_obs:.2f} (theoretical MRT p=2)"
+        )
 
         # Grid Convergence Index (GCI) for finest two grids
         if len(df) >= 2:
             r = ny_vals[-1] / ny_vals[-2]  # refinement ratio
             GCI = 1.25 * eps_vals[-1] / (r**p_obs - 1.0) if r**p_obs > 1.0 else np.nan
             print(f"[mesh] GCI (finest) = {GCI:.4e}")
-        else:
-            GCI = np.nan
 
-        df["p_obs"] = p_obs
-        df["GCI"] = GCI
-
-    df.to_csv(out / "mesh_convergence.csv", index=False)
-    print(f"[mesh] Wrote {out / 'mesh_convergence.csv'} ({len(df)} cases)")
+    # Write per-row data + dataset-level metadata columns
+    df_out = df.copy()
+    df_out["p_obs"] = p_obs  # same for all rows (dataset-level property)
+    df_out["GCI"] = GCI  # same for all rows
+    df_out.to_csv(out / "mesh_convergence.csv", index=False)
+    print(
+        f"[mesh] Wrote {out / 'mesh_convergence.csv'} ({len(df_out)} cases, p_obs={p_obs:.2f}, GCI={GCI:.4e})"
+    )
 
     # Convergence assessment
     if len(df) > 0:
         eps_finest = df["eps_Q"].iloc[-1] if len(df) > 0 else np.nan
         if eps_finest < 0.01:
-            print(f"[mesh] SUFFICIENT: ε(NY={df['NY'].iloc[-1]}) = {eps_finest:.4e} < 1%")
+            print(
+                f"[mesh] SUFFICIENT: ε(NY={df['NY'].iloc[-1]}) = {eps_finest:.4e} < 1%"
+            )
         elif eps_finest < 0.05:
-            print(f"[mesh] MARGINAL: ε(NY={df['NY'].iloc[-1]}) = {eps_finest:.4e} ∈ [1%, 5%]")
+            print(
+                f"[mesh] MARGINAL: ε(NY={df['NY'].iloc[-1]}) = {eps_finest:.4e} ∈ [1%, 5%]"
+            )
         else:
-            print(f"[mesh] INSUFFICIENT: ε(NY={df['NY'].iloc[-1]}) = {eps_finest:.4e} > 5%")
+            print(
+                f"[mesh] INSUFFICIENT: ε(NY={df['NY'].iloc[-1]}) = {eps_finest:.4e} > 5%"
+            )
 
     return df
 
@@ -179,6 +196,7 @@ def plot_mesh_convergence(
         Path to the generated figure.
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from lbm_mrt.viz.viz_template import init_style, format_axes, save_figure
@@ -193,17 +211,33 @@ def plot_mesh_convergence(
     ax = axes[0]
     valid = df.dropna(subset=["NY", "eps_Q"]).sort_values("NY")
     if len(valid) >= 2:
-        ax.loglog(valid["NY"], valid["eps_Q"], "o-", color="#2166AC", linewidth=1.5,
-                  markersize=7, markerfacecolor="white", markeredgewidth=1.2)
+        ax.loglog(
+            valid["NY"],
+            valid["eps_Q"],
+            "o-",
+            color="#2166AC",
+            linewidth=1.5,
+            markersize=7,
+            markerfacecolor="white",
+            markeredgewidth=1.2,
+        )
 
         # Power-law fit
         log_ny = np.log(valid["NY"].values)
         log_eps = np.log(np.maximum(valid["eps_Q"].values, 1e-15))
         coeffs = np.polyfit(log_ny, log_eps, 1)
-        ny_fit = np.logspace(np.log10(valid["NY"].min()), np.log10(valid["NY"].max()), 20)
-        ax.loglog(ny_fit, np.exp(coeffs[1]) * ny_fit ** coeffs[0], ":",
-                  color="#2166AC", linewidth=1.0, alpha=0.5,
-                  label=f"$p_{{obs}} = {-coeffs[0]:.2f}$")
+        ny_fit = np.logspace(
+            np.log10(valid["NY"].min()), np.log10(valid["NY"].max()), 20
+        )
+        ax.loglog(
+            ny_fit,
+            np.exp(coeffs[1]) * ny_fit ** coeffs[0],
+            ":",
+            color="#2166AC",
+            linewidth=1.0,
+            alpha=0.5,
+            label=f"$p_{{obs}} = {-coeffs[0]:.2f}$",
+        )
 
         ax.legend(fontsize=9)
 
@@ -216,17 +250,34 @@ def plot_mesh_convergence(
     if spurious_df is not None and len(spurious_df) > 0:
         ax2 = axes[1]
         sp_valid = spurious_df.dropna(subset=["NY", "max_u"]).sort_values("NY")
-        ax2.loglog(sp_valid["NY"], sp_valid["max_u"], "s-", color="#B2182B", linewidth=1.5,
-                   markersize=7, markerfacecolor="white", markeredgewidth=1.2, label="Huang SCMP")
+        ax2.loglog(
+            sp_valid["NY"],
+            sp_valid["max_u"],
+            "s-",
+            color="#B2182B",
+            linewidth=1.5,
+            markersize=7,
+            markerfacecolor="white",
+            markeredgewidth=1.2,
+            label="Huang SCMP",
+        )
 
         if len(sp_valid) >= 3:
             log_ny2 = np.log(sp_valid["NY"].values)
             log_u2 = np.log(sp_valid["max_u"].values)
             c2 = np.polyfit(log_ny2, log_u2, 1)
-            ny_fit2 = np.logspace(np.log10(sp_valid["NY"].min()), np.log10(sp_valid["NY"].max()), 20)
-            ax2.loglog(ny_fit2, np.exp(c2[1]) * ny_fit2 ** c2[0], ":",
-                       color="#B2182B", linewidth=1.0, alpha=0.5,
-                       label=f"slope = {c2[0]:.2f}")
+            ny_fit2 = np.logspace(
+                np.log10(sp_valid["NY"].min()), np.log10(sp_valid["NY"].max()), 20
+            )
+            ax2.loglog(
+                ny_fit2,
+                np.exp(c2[1]) * ny_fit2 ** c2[0],
+                ":",
+                color="#B2182B",
+                linewidth=1.0,
+                alpha=0.5,
+                label=f"slope = {c2[0]:.2f}",
+            )
             ax2.legend(fontsize=9)
 
         ax2.set_xlabel("Grid size $N_Y$")
@@ -243,6 +294,7 @@ def plot_mesh_convergence(
 
 # ── Design CSV generator (for future use after solver extension) ──
 
+
 def _base_mesh_params() -> dict[str, Any]:
     return {
         "pp_mode": 1,
@@ -253,7 +305,7 @@ def _base_mesh_params() -> dict[str, Any]:
         "GAB": 0.0,
         "GBA": 0.0,
         "sigmaA": 0.0,
-        "k1_huang": 1.0 / 12.0,
+        "epsilon_huang": -2.0 / 3.0,  # ε = −8k₁ with k₁=1/12
         "k2_huang": 0.0,
         "kd_huang": -1.0 / 12.0,
         "alpha_meq": 1.0,
@@ -305,7 +357,7 @@ def generate_mesh_design(
         Fb = Fb_ref * (h_ref / b) ** 3
         row = dict(base)
         row["case_name"] = f"mesh_NY{ny}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["Gy"] = Fb
         row["huang_rho_g"] = float(rl)
         row["huang_rho_l"] = float(rl)

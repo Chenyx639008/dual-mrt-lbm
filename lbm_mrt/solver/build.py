@@ -28,6 +28,9 @@ _HYDRATE_SOURCES = ["hydrate.cu", "hydrate_vop.cu"]
 def build(
     hydrate: bool = False,
     huang: bool = False,
+    grid: tuple[int, int] | None = None,
+    steps: int | None = None,
+    output_every: int | None = None,
     arch: str = "sm_120",
     debug: bool = False,
     output_dir: str | None = None,
@@ -38,6 +41,9 @@ def build(
     Args:
         hydrate:    If True, compile the hydrate-enabled variant.
         huang:      If True, compile the Huang & Wu (2016) SCMP variant (mcmp_huang_256).
+        grid:       Optional (NX, NY) override for the Huang build. Only used with huang=True.
+        steps:      Optional HUANG_NSTEPS override for short validation runs.
+        output_every: Optional HUANG_NOUTPUT override for short validation runs.
         arch:       GPU SM architecture string, e.g. "sm_120" for RTX 5090 / H100.
         debug:      If True, add -g -G flags for device-side debugging.
         output_dir: Directory to place the compiled binary. Defaults to lbm_mrt/solver/.
@@ -54,7 +60,14 @@ def build(
     sources = [os.path.join(SOLVER_SRC, name) for name in source_names]
 
     if huang:
-        binary_name = "mcmp_huang_256"
+        if grid is not None:
+            nx, ny = grid
+            grid_suffix = f"{nx}x{ny}" if nx != ny else f"{ny}"
+            binary_name = f"mcmp_huang_{grid_suffix}"
+        else:
+            binary_name = "mcmp_huang_256"
+        if steps is not None:
+            binary_name += f"_s{steps}"
     elif hydrate:
         binary_name = "mcmp_sim_hydrate"
     else:
@@ -76,6 +89,14 @@ def build(
     ]
     if huang:
         cmd.append("-DHUANG_256_BUILD")
+        if grid is not None:
+            nx, ny = grid
+            cmd.append(f"-DHUANG_NX={nx}")
+            cmd.append(f"-DHUANG_NY={ny}")
+        if steps is not None:
+            cmd.append(f"-DHUANG_NSTEPS={steps}")
+        if output_every is not None:
+            cmd.append(f"-DHUANG_NOUTPUT={output_every}")
     if hydrate:
         cmd.append("-DHYDRATE_ENABLE")
     if debug:
@@ -118,6 +139,26 @@ def main() -> None:
         help="Build the Huang & Wu (2016) SCMP variant (mcmp_huang_256).",
     )
     p.add_argument(
+        "--grid",
+        default=None,
+        metavar="NX[,NY]",
+        help="Optional Huang grid override. Use a single value for square grids or NX,NY for rectangular grids.",
+    )
+    p.add_argument(
+        "--steps",
+        default=None,
+        type=int,
+        metavar="N",
+        help="Optional Huang step-count override for short runs.",
+    )
+    p.add_argument(
+        "--output-every",
+        default=None,
+        type=int,
+        metavar="N",
+        help="Optional Huang output interval override.",
+    )
+    p.add_argument(
         "--arch",
         default="sm_120",
         metavar="SM",
@@ -140,10 +181,25 @@ def main() -> None:
         help="Print the nvcc command without executing it.",
     )
     args = p.parse_args()
+
+    grid: tuple[int, int] | None = None
+    if args.grid is not None:
+        grid_text = str(args.grid).replace("x", ",").replace("X", ",")
+        parts = [part.strip() for part in grid_text.split(",") if part.strip()]
+        if len(parts) == 1:
+            ny = int(parts[0])
+            grid = (ny, ny)
+        elif len(parts) == 2:
+            grid = (int(parts[0]), int(parts[1]))
+        else:
+            raise ValueError(f"Invalid --grid value: {args.grid!r}")
     sys.exit(
         build(
             hydrate=args.hydrate,
             huang=args.huang,
+            grid=grid,
+            steps=args.steps,
+            output_every=args.output_every,
             arch=args.arch,
             debug=args.debug,
             output_dir=args.output_dir,

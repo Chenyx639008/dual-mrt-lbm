@@ -1,0 +1,4 @@
+case_name,pp_mode,init_eq,tau_p_a,tau_p_b,kappa,GAB,GBA,sigmaA,epsilon_huang,k2_huang,alpha_meq,cs_a,cs_b,cs_R,cs_T,cs_G,huang_R0,huang_xc,huang_yc,huang_W,huang_init_mode,huang_rho_g,huang_rho_l,Gx,Gy,drive_mode,ENABLE_CKPT,OUTPUT_EVERY,huang_u_max,huang_psi_cut,huang_tanh_factor,huang_rho_max_init,tau_huang,Lambda_huang
+mesh_nx400_eps0.00,1,0,1.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,1.0,4.0,1.0,0.9,-1.0,50,200,200,5,1,0.045409459970752464,0.2481079779474363,0.0,0.0,1,False,5000,0.15,0.001,2.0,1.0,1.5,0.0833333333333333
+mesh_nx400_eps-0.48,1,0,1.0,1.0,0.0,0.0,0.0,0.0,-0.48,0.0,1.0,1.0,4.0,1.0,0.9,-1.0,50,200,200,5,1,0.045409459970752464,0.2481079779474363,0.0,0.0,1,False,5000,0.15,0.001,2.0,1.0,1.5,0.0833333333333333
+mesh_nx400_eps-0.96,1,0,1.0,1.0,0.0,0.0,0.0,0.0,-0.96,0.0,1.0,1.0,4.0,1.0,0.9,-1.0,50,200,200,5,1,0.045409459970752464,0.2481079779474363,0.0,0.0,1,False,5000,0.15,0.001,2.0,1.0,1.5,0.0833333333333333

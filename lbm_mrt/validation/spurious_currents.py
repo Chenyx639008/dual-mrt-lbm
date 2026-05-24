@@ -72,7 +72,7 @@ def _base_spurious_params() -> dict[str, Any]:
         "GAB": 0.0,
         "GBA": 0.0,
         "sigmaA": 0.0,
-        "k1_huang": 1.0 / 12.0,
+        "epsilon_huang": -2.0 / 3.0,  # ε = −8k₁ with k₁=1/12
         "k2_huang": 0.0,
         "kd_huang": -1.0 / 12.0,
         "alpha_meq": 1.0,
@@ -124,7 +124,7 @@ def generate_spurious_design(
         R = int(0.2 * ny)  # R/NY = 0.2 per validation_plan §6.2
         row = dict(base)
         row["case_name"] = f"spurious_NY{ny}_R{R}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["huang_R0"] = float(R)
         row["huang_xc"] = float(ny / 2)
         row["huang_yc"] = float(ny / 2)
@@ -155,13 +155,26 @@ def analyze_spurious(
 
     records = []
     # Also scan existing laplace results for spurious data
-    case_dirs = sorted(d for d in root.iterdir() if d.is_dir() and
-                       (d.name.startswith("spurious_") or d.name.startswith("laplace_")))
+    case_dirs = sorted(
+        d
+        for d in root.iterdir()
+        if d.is_dir()
+        and (d.name.startswith("spurious_") or d.name.startswith("laplace_"))
+    )
     if not case_dirs:
         for sub in sorted(root.iterdir()):
             if sub.is_dir():
-                case_dirs.extend(sorted(d for d in sub.iterdir() if d.is_dir() and
-                                       (d.name.startswith("spurious_") or d.name.startswith("laplace_"))))
+                case_dirs.extend(
+                    sorted(
+                        d
+                        for d in sub.iterdir()
+                        if d.is_dir()
+                        and (
+                            d.name.startswith("spurious_")
+                            or d.name.startswith("laplace_")
+                        )
+                    )
+                )
 
     for case_dir in case_dirs:
         vtk_dir = case_dir / "outputdata_scmp"
@@ -182,21 +195,23 @@ def analyze_spurious(
             rho_vals = np.sort(rho.flatten())
             n = len(rho_vals)
             rho_g = float(np.mean(rho_vals[: max(1, int(0.05 * n))]))
-            rho_l = float(np.mean(rho_vals[-max(1, int(0.05 * n)):]))
+            rho_l = float(np.mean(rho_vals[-max(1, int(0.05 * n)) :]))
         except Exception:
             rho_l, rho_g = np.nan, np.nan
 
-        records.append({
-            "case_name": case_dir.name,
-            "NY": result["ny"],
-            "NX": result["nx"],
-            "max_u": result["max_u"],
-            "mean_u": result["mean_u"],
-            "max_ux": result["max_ux"],
-            "max_uy": result["max_uy"],
-            "rho_l": rho_l,
-            "rho_g": rho_g,
-        })
+        records.append(
+            {
+                "case_name": case_dir.name,
+                "NY": result["ny"],
+                "NX": result["nx"],
+                "max_u": result["max_u"],
+                "mean_u": result["mean_u"],
+                "max_ux": result["max_ux"],
+                "max_uy": result["max_uy"],
+                "rho_l": rho_l,
+                "rho_g": rho_g,
+            }
+        )
         print(f"  {case_dir.name}: NY={result['ny']}, max|u|={result['max_u']:.4e}")
 
     if not records:
@@ -208,7 +223,9 @@ def analyze_spurious(
 
     # Summary statistics
     if len(df) > 0:
-        print(f"[spurious] max|u| range: [{df['max_u'].min():.4e}, {df['max_u'].max():.4e}]")
+        print(
+            f"[spurious] max|u| range: [{df['max_u'].min():.4e}, {df['max_u'].max():.4e}]"
+        )
         print(f"[spurious] mean max|u|: {df['max_u'].mean():.4e}")
 
     return df
@@ -233,6 +250,7 @@ def plot_spurious(
         Path to the generated figure.
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from lbm_mrt.viz.viz_template import init_style, format_axes, save_figure
@@ -246,16 +264,32 @@ def plot_spurious(
         raise ValueError("No valid data points")
 
     # Huang data
-    ax.loglog(valid["NY"], valid["max_u"], "o-", color="#2166AC", linewidth=1.5,
-              markersize=7, markerfacecolor="white", markeredgewidth=1.2,
-              label="Huang SCMP (this work)")
+    ax.loglog(
+        valid["NY"],
+        valid["max_u"],
+        "o-",
+        color="#2166AC",
+        linewidth=1.5,
+        markersize=7,
+        markerfacecolor="white",
+        markeredgewidth=1.2,
+        label="Huang SCMP (this work)",
+    )
 
     # Li comparison (optional)
     if li_comparison is not None and len(li_comparison) > 0:
         li_valid = li_comparison.dropna(subset=["NY", "max_u"]).sort_values("NY")
-        ax.loglog(li_valid["NY"], li_valid["max_u"], "s--", color="#B2182B", linewidth=1.5,
-                  markersize=7, markerfacecolor="white", markeredgewidth=1.2,
-                  label="Li MCMP (legacy)")
+        ax.loglog(
+            li_valid["NY"],
+            li_valid["max_u"],
+            "s--",
+            color="#B2182B",
+            linewidth=1.5,
+            markersize=7,
+            markerfacecolor="white",
+            markeredgewidth=1.2,
+            label="Li MCMP (legacy)",
+        )
 
     # Power-law fit for Huang
     if len(valid) >= 3:
@@ -263,9 +297,18 @@ def plot_spurious(
         log_u = np.log(valid["max_u"].values)
         coeffs = np.polyfit(log_ny, log_u, 1)
         fit_label = f"slope = {coeffs[0]:.2f}"
-        ny_fit = np.logspace(np.log10(valid["NY"].min()), np.log10(valid["NY"].max()), 20)
-        ax.loglog(ny_fit, np.exp(coeffs[1]) * ny_fit ** coeffs[0], ":",
-                  color="#2166AC", linewidth=1.0, alpha=0.5, label=fit_label)
+        ny_fit = np.logspace(
+            np.log10(valid["NY"].min()), np.log10(valid["NY"].max()), 20
+        )
+        ax.loglog(
+            ny_fit,
+            np.exp(coeffs[1]) * ny_fit ** coeffs[0],
+            ":",
+            color="#2166AC",
+            linewidth=1.0,
+            alpha=0.5,
+            label=fit_label,
+        )
 
     ax.set_xlabel("Grid size $N_Y$")
     ax.set_ylabel("$\\max|\\mathbf{u}|$ (lu)")

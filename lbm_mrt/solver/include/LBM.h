@@ -72,83 +72,59 @@ inline constexpr double Minv[9][9] = {
 	{4 / 36.0, 2 / 36.0, 1 / 36.0, 6 / 36.0, 3 / 36.0,-6 / 36.0,-3 / 36.0, 0 / 36.0,-9 / 36.0}
 };
 /* MRT 松弛率 */
-inline constexpr double tau_e = 1 / 0.8, tau_t = 1 / 0.8,  tau_q = 1 / 1.1, tau_p = 1, tau_p_a = 1.0, tau_p_b = 1.0;
-/*MRT 对角松弛矩阵*/
-//inline constexpr double A_a[9] = { 1.0, 1 / tau_e, 1 / tau_t, 1.0, 1 / tau_q, 1.0, 1 / tau_q, 1 / h_tau_p_a, 1 / h_tau_p_a };
-//inline constexpr double A_b[9] = { 1.0, 1 / tau_e, 1 / tau_t, 1.0, 1 / tau_q, 1.0, 1 / tau_q, 1 / h_tau_p_b, 1 / h_tau_p_b };
-inline constexpr int contact_angle_dir = 0; //0:接触角减小、1:接触角增大
-inline constexpr double phi_contact_pho_A = 1, delta_pho_A = 0;
-
-/* ②  初始状态选择：给 main 用。你可以设 1=液滴 / 2=平界面 */
-//之前功能，现予保留
-inline constexpr int ini_opt = 1;
-inline constexpr double w_ini = 3.0; //界面厚度
-inline constexpr int x_ini = 75.0 * SCALE, y_ini = 115.0 * SCALE; //初始液滴位置
-inline constexpr double radius = 35.0 ; //液滴半径
+inline constexpr double tau_e = 1 / 0.8, tau_t = 1 / 0.8, tau_q = 1 / 1.1, tau_p = 1;
+inline constexpr double tau_p_a = 1.0, tau_p_b = 1.0;
 inline constexpr int MAX_OBS = 1000;
 
-namespace phys  // 放进命名空间，避免名字冲突
+namespace phys
 {
-    /* 网格单位物理量 */
+    /* Lattice unit physics */
     inline constexpr double deltax = 1.0;
     inline constexpr double deltat = 1.0;
     inline constexpr double c      = deltax / deltat;
     inline constexpr double cs2    = c*c / 3.0;
-    /* 伪势-相互作用强度 */
-    inline constexpr double GAA = -1.0, GAB_default = 0.15, GBA_default = 0.15, GBB = 0.0;
-    inline constexpr double sigmaA_default = 0.11; // A 相表面张力
-    // ======== 多材料润湿性：设备常量查表（mat_id -> GAw/GBw） ========
-    inline constexpr double contact_angle_default = 0.0;
-    // 仅作为“默认占位/文档化”的旧映射，不在核函数中直接使用！
-    inline constexpr double GAw_default_m = 1.0 / 456.69;
-    inline constexpr double GAw_default_c = 86.41;
-    inline constexpr double GBw_default   = 0.0;
-
+    /* Interaction strength (kept for legacy __constant__ upload) */
+    inline constexpr double GAA = -1.0;
+    inline constexpr double GBB = 0.0;
 }
-// ---- host-side (defaults) ----
-extern double h_Gx, h_Gy;
-extern int    h_drive_mode;
-extern double h_rhoA_ini_h, h_rhoA_ini_l;
-extern double h_rhoB_ini_h, h_rhoB_ini_l;
-extern double h_rhoA_ini_h_1, h_rhoA_ini_l_0;
-extern double h_rhoB_ini_h_0, h_rhoB_ini_l_1;
-
-extern double h_tau_p_a, h_tau_p_b;
-extern double h_kappa;
-extern double h_GAB, h_GBA, h_sigmaA;
-extern double h_GAw_m, h_GAw_c;
 
 
-// —— 设备常量/指针：声明/定义开关 ——
-// 只在一个编译单元（建议 LBM.cu）里 #define LBM_DEFINE_GLOBALS 之后再包含 LBM.h
-// LBM.h 里，和你现在的一样的宏块中，再加上这两行
+
+// —— Device-side __constant__ and device-pointer declarations ——
+// Single compilation unit (LBM.cu) #define-s LBM_DEFINE_GLOBALS to own the storage;
+// all other .cu files see `extern` declarations via the #else branch.
+
+// ── Group A: Wettability & wall maps (MCMP + future SCMP two-phase) ──
 #ifdef LBM_DEFINE_GLOBALS
 __constant__ double GAw_by_mat_gpu[256];
 __constant__ double GBw_by_mat_gpu[256];
-
 __device__ unsigned char* d_wall_mat = nullptr;
 __device__ double*        d_GAw_map  = nullptr;
 __device__ double*        d_GBw_map  = nullptr;
 
+// ── Group B: MRT relaxation matrix (common to MCMP + SCMP) ──
 __constant__ double A_a_gpu[9];
 __constant__ double A_b_gpu[9];
+
+// ── Group C: Body force & drive (common) ──
+__constant__ double d_Gx, d_Gy;
+__constant__ double d_drive_scale;
+
+// ── Group D: MCMP two-phase parameters ──
 __constant__ double d_water_satur;
 __constant__ unsigned long long d_water_seed;
-__constant__ double d_Gx, d_Gy;
 __constant__ int    d_drive_mode;
 __constant__ double d_rhoA_ini_h, d_rhoA_ini_l;
 __constant__ double d_rhoB_ini_h, d_rhoB_ini_l;
 __constant__ double d_rhoA_ini_h_1, d_rhoA_ini_l_0;
 __constant__ double d_rhoB_ini_h_0, d_rhoB_ini_l_1;
-
 __constant__ double d_tau_p_a, d_tau_p_b;
 __constant__ double d_kappa;
-__constant__ double d_GAB;      // A<-B 跨相作用系数（你的命名逻辑）
-__constant__ double d_GBA;      // B<-A 跨相作用系数
-__constant__ double d_sigmaA;   // A相表面张力（如需在核函数中直接用）
-__constant__ double d_drive_scale;
+__constant__ double d_GAB;
+__constant__ double d_GBA;
+__constant__ double d_sigmaA;
 
-// ── Huang & Wu (2016) SCMP ──
+// ── Group E: Huang & Wu (2016) SCMP ──
 __constant__ int    d_pp_mode;
 __constant__ double d_k1_huang, d_k2_huang, d_kd_huang, d_alpha_meq;
 __constant__ double d_cs_a, d_cs_b, d_cs_R, d_cs_T, d_cs_G;
@@ -157,36 +133,45 @@ __constant__ double d_huang_rho_g, d_huang_rho_l;
 __constant__ double d_tau_huang, d_Lambda_huang;
 __constant__ int    d_huang_init_mode;
 __constant__ double d_G_ads_scmp;
-__constant__ double d_theta_contact_deg;  // ψ-based contact angle (°)
+__constant__ double d_theta_contact_deg;
+__constant__ double d_huang_psi_l_ref, d_huang_psi_g_ref;
+__constant__ double d_huang_u_max, d_huang_psi_cut;
+__constant__ double d_huang_tanh_factor, d_huang_rho_max_init;
 
-#else
+#else  // ── extern declarations for non-defining translation units ──
+
+// Group A: Wettability & wall maps
 extern __device__ __constant__ double GAw_by_mat_gpu[256];
 extern __device__ __constant__ double GBw_by_mat_gpu[256];
-
 extern __device__ unsigned char* d_wall_mat;
 extern __device__ double*        d_GAw_map;
 extern __device__ double*        d_GBw_map;
 
+// Group B: MRT relaxation matrix
 extern __device__ __constant__ double A_a_gpu[9];
 extern __device__ __constant__ double A_b_gpu[9];
+
+// Group C: Body force & drive
+extern __device__ __constant__ double d_Gx, d_Gy;
+extern __device__ __constant__ double d_drive_scale;
+
+// Group D: MCMP two-phase parameters
 extern __device__ __constant__ double d_water_satur;
 extern __device__ __constant__ unsigned long long d_water_seed;
-extern __device__ __constant__ double d_Gx, d_Gy;
 extern __device__ __constant__ int    d_drive_mode;
 extern __device__ __constant__ double d_rhoA_ini_h, d_rhoA_ini_l;
 extern __device__ __constant__ double d_rhoB_ini_h, d_rhoB_ini_l;
 extern __device__ __constant__ double d_rhoA_ini_h_1, d_rhoA_ini_l_0;
 extern __device__ __constant__ double d_rhoB_ini_h_0, d_rhoB_ini_l_1;
-
 extern __device__ __constant__ double d_tau_p_a, d_tau_p_b;
 extern __device__ __constant__ double d_kappa;
-extern __device__ __constant__ double d_drive_scale;//控制力的使用
 extern __device__ __constant__ double d_GAB;
 extern __device__ __constant__ double d_GBA;
 extern __device__ __constant__ double d_sigmaA;
-// ── Huang & Wu (2016) SCMP ──
+
+// Group E: Huang & Wu (2016) SCMP
 extern __device__ __constant__ int    d_pp_mode;
-extern __device__ __constant__ double d_k1_huang, d_k2_huang, d_kd_huang, d_alpha_meq;
+extern __device__ __constant__ double d_k1_huang, d_k2_huang, d_alpha_meq;
 extern __device__ __constant__ double d_cs_a, d_cs_b, d_cs_R, d_cs_T, d_cs_G;
 extern __device__ __constant__ double d_huang_R0, d_huang_xc, d_huang_yc, d_huang_W;
 extern __device__ __constant__ double d_huang_rho_g, d_huang_rho_l;
@@ -194,26 +179,31 @@ extern __device__ __constant__ double d_tau_huang, d_Lambda_huang;
 extern __device__ __constant__ int    d_huang_init_mode;
 extern __device__ __constant__ double d_G_ads_scmp;
 extern __device__ __constant__ double d_theta_contact_deg;
+extern __device__ __constant__ double d_huang_psi_l_ref, d_huang_psi_g_ref;
+extern __device__ __constant__ double d_huang_u_max, d_huang_psi_cut;
+extern __device__ __constant__ double d_huang_tanh_factor, d_huang_rho_max_init;
 #endif
 
 
-// ---- device getters (decl only; bodies in LBM.cu) ----
-__device__ double get_water_satur();
-__device__ unsigned long long get_water_seed();
+// ── Device getter declarations ──
+// Bodies are in LBM.cu with __forceinline__.
+
+// Group C: Body force & drive
 __device__ double get_Gx();
 __device__ double get_Gy();
+
+// Group D: MCMP two-phase
+__device__ double get_water_satur();
+__device__ unsigned long long get_water_seed();
 __device__ int    get_drive_mode();
 __device__ double rhoA_hi();
 __device__ double rhoA_lo();
 __device__ double rhoB_hi();
 __device__ double rhoB_lo();
-
 __device__ double rhoA_hi_1();
 __device__ double rhoA_lo_0();
 __device__ double rhoB_hi_0();
 __device__ double rhoB_lo_1();
-
-
 __device__ double tauA();
 __device__ double tauB();
 __device__ double get_kappa();
@@ -221,11 +211,10 @@ __device__ double get_GAB();
 __device__ double get_GBA();
 __device__ double get_sigmaA();
 
-// ── Huang & Wu (2016) SCMP getters ──
+// Group E: Huang & Wu (2016) SCMP
 __device__ int    get_pp_mode();
 __device__ double get_k1_huang();
 __device__ double get_k2_huang();
-__device__ double get_kd_huang();
 __device__ double get_alpha_meq();
 __device__ double get_cs_a();
 __device__ double get_cs_b();
@@ -241,29 +230,14 @@ __device__ double get_huang_rho_l();
 __device__ int    get_huang_init_mode();
 __device__ double get_G_ads_scmp();
 __device__ double get_theta_contact_deg();
+__device__ double get_huang_psi_l_ref();
+__device__ double get_huang_psi_g_ref();
+__device__ double get_huang_u_max();
+__device__ double get_huang_psi_cut();
+__device__ double get_huang_tanh_factor();
+__device__ double get_huang_rho_max_init();
 
-//状态方程参数PR-EOS
-namespace eos
-{
-    inline constexpr double PR_scalar = 1; //状态方程缩放因子
-    inline constexpr double reducedT_w_ini = 0.85; // 水的初始缩放温度
 
-    /* 水的PR-EOS 常数 */
-    inline constexpr double a_w     = 1.0/49.0;
-    inline constexpr double b_w     = 2.0/21.0;
-    inline constexpr double R_w      = 1.0;
-    inline constexpr double omega_w  = 0.344;
-    inline constexpr double Tc_w     = 0.036461002037067;
-    inline constexpr double T      = Tc_w * reducedT_w_ini; // 温度
-
-    //甲烷的PR-EOS参数
-    inline constexpr double a_m     = 1.0/49.0;
-    inline constexpr double b_m     = 2.0/21.0;
-    inline constexpr double R_m      = 1.0;
-    inline constexpr double omega_m  = 0.011;
-    inline constexpr double Tc_m     = 0.036461002037067;
-
-}
 
 //定义内存大小,mem_size_scalar物理量，mem_size_distfun分布函数
 constexpr size_t mem_size_scalar = sizeof(double) * NX * NY;

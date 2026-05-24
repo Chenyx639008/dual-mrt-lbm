@@ -13,7 +13,7 @@ project:
 # ── Physics mode ──
 huang_scmp:
   pp_mode: 1            # SCMP (required for mcmp_huang_256)
-  k1_huang: 0.083333    # surface-tension knob (1/12 = half-max tension, paper Eq.62: σ∝1-6k₁)
+  epsilon_huang: -0.666667 # ε = −8·k₁,  k₁=1/12 = half-max tension
   k2_huang: 0.0         # secondary σ parameter (paper Eq.59: enters Q_m1 via k1+2k2)
   kd_huang: -0.083333   # fixed constant kd=-1/12 (paper Section 6.3, enters pressure tensor)
   alpha_meq: 1.0        # Eq.5 α parameter (paper: α=1); controls meq[1] = (-2+3α|u|²)ρ
@@ -31,6 +31,15 @@ huang_scmp:
   Lambda_huang: 0.083333 # magic parameter Λ=1/12 (paper: eliminates anisotropy)
   G_ads: 0.0             # SCMP adsorption force (0=disabled; use θ_contact instead)
   theta_contact_deg: 0.0 # ψ-based contact angle (0=disabled; e.g. 90.0 for neutral)
+  huang_psi_l_ref: 0.15  # liquid reference ψ for cos²(θ/2) ghost BC
+  huang_psi_g_ref: 0.01  # gas reference ψ for cos²(θ/2) ghost BC
+
+# ── Numerical guards (rarely need tuning) ──
+numerics:
+  huang_u_max: 0.15       # velocity safety cap (|u| > UMAX → clipped)
+  huang_psi_cut: 1.0e-3   # ψ² floor for Q_m kernel denominator
+  huang_tanh_factor: 2.0  # init tanh steepness  tanh(factor×(R0−r)/W)
+  huang_rho_max_init: 1.0 # init density upper clamp
 
 # ── MRT relaxation ──
 relaxation:

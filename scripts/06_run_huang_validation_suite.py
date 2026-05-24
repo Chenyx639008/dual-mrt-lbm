@@ -83,7 +83,7 @@ def _base_params() -> dict:
         "GAB": 0.0,
         "GBA": 0.0,
         "sigmaA": 0.0,
-        "k1_huang": 1.0 / 12.0,
+        "epsilon_huang": -2.0 / 3.0,  # ε = −8k₁ with k₁=1/12
         "k2_huang": 0.0,
         "kd_huang": -1.0 / 12.0,
         "alpha_meq": 1.0,
@@ -161,7 +161,7 @@ def generate_decoupling_design(
         row = dict(base)
         row["case_name"] = f"decoupling_Tr{tr:.2f}_k1{k1:.4f}"
         row["cs_T"] = tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
-        row["k1_huang"] = k1
+        row["epsilon_huang"] = -8.0 * k1  # ε = −8k₁
         row["huang_R0"] = 40.0
         row["huang_xc"] = 128.0
         row["huang_yc"] = 128.0
@@ -269,14 +269,13 @@ def generate_mesh_design(
     base["huang_init_mode"] = 3
     base["Gx"] = 5e-9
     _, rl = _coexistence_density(tr)
-    T_abs = tr * TC
     rows = []
     for ny in ny_list:
         b = (ny - 2) / 2.0
         Fb = Fb_ref * (h_ref / b) ** 3
         row = dict(base)
         row["case_name"] = f"mesh_NY{ny}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["Gx"] = Fb
         row["huang_rho_g"] = rl
         row["huang_rho_l"] = rl

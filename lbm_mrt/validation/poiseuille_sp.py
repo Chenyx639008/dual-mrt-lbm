@@ -67,7 +67,7 @@ def poiseuille_analytical(
     """
     u = np.zeros_like(y)
     mask = np.abs(y) <= b
-    u[mask] = Fb * (b**2 - y[mask]**2) / (2.0 * rho * nu)
+    u[mask] = Fb * (b**2 - y[mask] ** 2) / (2.0 * rho * nu)
     return u
 
 
@@ -102,7 +102,7 @@ def analyze_poiseuille(
     results_root: str,
     out_dir: str | None = None,
     tr: float = 0.70,
-    tau: float = 1.0,
+    tau: float = 1.5,  # matches tau_huang in configs/huang_scmp.yaml (MRT τ=1.5)
     Fb: float = 5e-9,
 ) -> pd.DataFrame:
     """Analyze Poiseuille flow results.
@@ -129,11 +129,19 @@ def analyze_poiseuille(
     nu = (tau - 0.5) / 3.0  # MRT D2Q9 kinematic viscosity
 
     records = []
-    case_dirs = sorted(d for d in root.iterdir() if d.is_dir() and d.name.startswith("poiseuille_"))
+    case_dirs = sorted(
+        d for d in root.iterdir() if d.is_dir() and d.name.startswith("poiseuille_")
+    )
     if not case_dirs:
         for sub in sorted(root.iterdir()):
             if sub.is_dir():
-                case_dirs.extend(sorted(d for d in sub.iterdir() if d.is_dir() and d.name.startswith("poiseuille_")))
+                case_dirs.extend(
+                    sorted(
+                        d
+                        for d in sub.iterdir()
+                        if d.is_dir() and d.name.startswith("poiseuille_")
+                    )
+                )
 
     for case_dir in case_dirs:
         vtk_dir = case_dir / "outputdata_scmp"
@@ -167,18 +175,20 @@ def analyze_poiseuille(
         U_max_lbm = np.max(u_profile)
         U_max_an = np.max(u_an)
 
-        records.append({
-            "case_name": case_dir.name,
-            "NY": ny,
-            "NX": nx,
-            "Tr": tr,
-            "R2": r2,
-            "eps_Q": eps_Q,
-            "U_max_lbm": U_max_lbm,
-            "U_max_an": U_max_an,
-            "Q_lbm": Q_lbm,
-            "Q_an": Q_an,
-        })
+        records.append(
+            {
+                "case_name": case_dir.name,
+                "NY": ny,
+                "NX": nx,
+                "Tr": tr,
+                "R2": r2,
+                "eps_Q": eps_Q,
+                "U_max_lbm": U_max_lbm,
+                "U_max_an": U_max_an,
+                "Q_lbm": Q_lbm,
+                "Q_an": Q_an,
+            }
+        )
         print(f"  {case_dir.name}: R²={r2:.5f}, ε_Q={eps_Q:.4e}")
 
     if not records:
@@ -196,7 +206,7 @@ def plot_poiseuille(
     results_root: str,
     out_path: str,
     tr: float = 0.70,
-    tau: float = 1.0,
+    tau: float = 1.5,  # matches tau_huang in configs/huang_scmp.yaml
     Fb: float = 5e-9,
 ) -> str:
     """Generate normalized Poiseuille velocity profile plot.
@@ -214,6 +224,7 @@ def plot_poiseuille(
         Path to the generated figure.
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from lbm_mrt.viz.viz_template import init_style, format_axes, save_figure
@@ -229,11 +240,17 @@ def plot_poiseuille(
     nu = (tau - 0.5) / 3.0
 
     root = Path(results_root)
-    case_dirs = sorted(d for d in root.iterdir() if d.is_dir() and d.name.startswith("poiseuille_"))
+    case_dirs = sorted(
+        d for d in root.iterdir() if d.is_dir() and d.name.startswith("poiseuille_")
+    )
     if not case_dirs:
         for sub in sorted(root.iterdir()):
             if sub.is_dir():
-                case_dirs = sorted(d for d in sub.iterdir() if d.is_dir() and d.name.startswith("poiseuille_"))
+                case_dirs = sorted(
+                    d
+                    for d in sub.iterdir()
+                    if d.is_dir() and d.name.startswith("poiseuille_")
+                )
 
     if not case_dirs:
         raise FileNotFoundError(f"No poiseuille_* cases under {results_root}")
@@ -258,12 +275,26 @@ def plot_poiseuille(
 
         # Analytical line
         y_norm = y / b
-        ax.plot(u_an / U_max, y_norm, "-", color=color, linewidth=1.5,
-                label=f"Analytical (Tr={tr:.2f})" if i == 0 else None)
+        ax.plot(
+            u_an / U_max,
+            y_norm,
+            "-",
+            color=color,
+            linewidth=1.5,
+            label=f"Analytical (Tr={tr:.2f})" if i == 0 else None,
+        )
         # LBM scatter
-        ax.scatter(u_profile / U_max, y_norm, marker=marker, facecolors="white",
-                   edgecolors=color, s=30, linewidths=0.8, zorder=5,
-                   label=f"LBM (Tr={tr:.2f})" if i == 0 else None)
+        ax.scatter(
+            u_profile / U_max,
+            y_norm,
+            marker=marker,
+            facecolors="white",
+            edgecolors=color,
+            s=30,
+            linewidths=0.8,
+            zorder=5,
+            label=f"LBM (Tr={tr:.2f})" if i == 0 else None,
+        )
 
     ax.set_xlabel("$u_x / U_{\\max}$")
     ax.set_ylabel("$y / b$")
@@ -281,6 +312,7 @@ def plot_poiseuille(
 
 # ── Design CSV generator (for future use after solver extension) ──
 
+
 def _base_poiseuille_params() -> dict[str, Any]:
     return {
         "pp_mode": 1,
@@ -291,7 +323,7 @@ def _base_poiseuille_params() -> dict[str, Any]:
         "GAB": 0.0,
         "GBA": 0.0,
         "sigmaA": 0.0,
-        "k1_huang": 1.0 / 12.0,
+        "epsilon_huang": -2.0 / 3.0,  # ε = −8k₁ with k₁=1/12
         "k2_huang": 0.0,
         "kd_huang": -1.0 / 12.0,
         "alpha_meq": 1.0,
@@ -337,7 +369,7 @@ def generate_poiseuille_design(
         _, rl, _ = result
         row = dict(base)
         row["case_name"] = f"poiseuille_Tr{Tr:.2f}"
-        row["cs_T"] = T_abs
+        row["cs_T"] = Tr  # reduced temperature T/Tc (solver treats cs_T as Tr)
         row["huang_rho_g"] = float(rl)
         row["huang_rho_l"] = float(rl)
         rows.append(row)

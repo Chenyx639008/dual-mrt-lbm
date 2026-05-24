@@ -264,6 +264,21 @@ def set_global_style(
             # PDF/PS 嵌入（避免 PDF 中文丢失）
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
+            # ── mathtext 数学字体 ───────────────────────────────────────
+            # 问题：$k_1$ / $\rho$ 等 LaTeX 数学模式由 matplotlib 内置
+            #   mathtext 渲染器独立处理，默认用 DejaVu Sans，不跟随
+            #   font.sans-serif 或 FontProperties，导致公式字体与正文
+            #   的 Times New Roman 不一致。
+            # 解决：mathtext.fontset = "stix"
+            #   STIX (Scientific and Technical Information Exchange) 是
+            #   专为 Times New Roman 设计的数学配套字体，字形与 TNR 高度
+            #   兼容，被 Nature/Science/APS/AGU 等期刊广泛接受。
+            # 备选方案（按需求选择）：
+            #   "stix"       → Times 风格衬线数学字体  ← 当前
+            #   "cm"         → Computer Modern (LaTeX 默认)
+            #   "dejavuserif"→ DejaVu Serif 风格
+            #   "custom"     → 配合 mathtext.rm/it/bf 自定义字体路径
+            "mathtext.fontset": "stix",
             # 轴与刻度线
             "axes.linewidth": axis_linewidth,
             "xtick.major.width": axis_linewidth,

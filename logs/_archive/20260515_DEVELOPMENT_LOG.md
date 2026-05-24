@@ -240,3 +240,8 @@ print(f'θ={r[\"theta_deg\"]:.1f}°')
 - **基于分支**：huang_mrt_2d
 - **标签**：v20260516-validation-suite
 - **提交信息**：见 git log
+
+
+
+git checkout v20260516-validation-suite   # 回到此版本
+git log --oneline v20260516-validation-suite  # 查看提交

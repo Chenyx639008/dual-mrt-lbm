@@ -52,7 +52,6 @@ __device__ __forceinline__ double get_sigmaA(){ return d_sigmaA; }
 __device__ __forceinline__ int    get_pp_mode()        { return d_pp_mode; }
 __device__ __forceinline__ double get_k1_huang()       { return d_k1_huang; }
 __device__ __forceinline__ double get_k2_huang()       { return d_k2_huang; }
-__device__ __forceinline__ double get_kd_huang()       { return d_kd_huang; }
 __device__ __forceinline__ double get_alpha_meq()      { return d_alpha_meq; }
 __device__ __forceinline__ double get_cs_a()           { return d_cs_a; }
 __device__ __forceinline__ double get_cs_b()           { return d_cs_b; }
@@ -68,6 +67,12 @@ __device__ __forceinline__ double get_huang_rho_l()    { return d_huang_rho_l; }
 __device__ __forceinline__ int    get_huang_init_mode(){ return d_huang_init_mode; }
 __device__ __forceinline__ double get_G_ads_scmp()     { return d_G_ads_scmp; }
 __device__ __forceinline__ double get_theta_contact_deg() { return d_theta_contact_deg; }
+__device__ __forceinline__ double get_huang_psi_l_ref()   { return d_huang_psi_l_ref; }
+__device__ __forceinline__ double get_huang_psi_g_ref()   { return d_huang_psi_g_ref; }
+__device__ __forceinline__ double get_huang_u_max()       { return d_huang_u_max; }
+__device__ __forceinline__ double get_huang_psi_cut()     { return d_huang_psi_cut; }
+__device__ __forceinline__ double get_huang_tanh_factor() { return d_huang_tanh_factor; }
+__device__ __forceinline__ double get_huang_rho_max_init() { return d_huang_rho_max_init; }
 
 
 __constant__ int e_gpu[Q][2];//D2Q9速度方向向量（如 e[9][2]）
@@ -112,11 +117,14 @@ __global__ void dbg_consts_once(){
 
         // ── Huang & Wu (2016) SCMP ──
         sink += (double)get_pp_mode();
-        sink += get_k1_huang() + get_k2_huang() + get_kd_huang() + get_alpha_meq();
-    sink += get_G_ads_scmp() + get_theta_contact_deg();
+        sink += get_k1_huang() + get_k2_huang() + get_alpha_meq();
+        sink += get_G_ads_scmp() + get_theta_contact_deg();
         sink += get_cs_a() + get_cs_b() + get_cs_R() + get_cs_T() + get_cs_G();
         sink += get_huang_R0() + get_huang_xc() + get_huang_yc() + get_huang_W();
         sink += (double)get_huang_init_mode();
+        sink += get_huang_psi_l_ref() + get_huang_psi_g_ref();
+        sink += get_huang_u_max() + get_huang_psi_cut();
+        sink += get_huang_tanh_factor() + get_huang_rho_max_init();
 
         // 防止被优化掉
         if (sink < -1e300) printf("sink=%g\n", (double)sink);
@@ -682,7 +690,6 @@ __host__ void init_all(int* pointsflag, double* rho_A, double* fin_A, double* fo
 //用于将所有需要在 GPU 上共享使用的物理常量和控制参数复制到 __constant__ 内存中。
 //cudaMemcpyToSymbol 是专门用于将值写入 __constant__ 内存的
 __host__ void init_device_variable() {
-	using namespace eos;
     using namespace phys;
 
 	// D2Q9 方向与权重
@@ -697,47 +704,20 @@ __host__ void init_device_variable() {
 
 	CK(cudaMemcpyToSymbol(tau_e_gpu, &tau_e, sizeof(double)));
 	CK(cudaMemcpyToSymbol(tau_t_gpu, &tau_t, sizeof(double)));
-	//CK(cudaMemcpyToSymbol(tau_p_gpu, &tau_p, sizeof(double)));
 	CK(cudaMemcpyToSymbol(tau_q_gpu, &tau_q, sizeof(double)));
 
 	// 各组分吸引力参数
 	CK(cudaMemcpyToSymbol(GAA_gpu, &GAA, sizeof(double)));
-	//CK(cudaMemcpyToSymbol(GAB_gpu, &GAB, sizeof(double)));
-	//CK(cudaMemcpyToSymbol(GBA_gpu, &GBA, sizeof(double)));
 	CK(cudaMemcpyToSymbol(GBB_gpu, &GBB, sizeof(double)));
-	// 初始条件配置
-	CK(cudaMemcpyToSymbol(ini_opt_gpu, &ini_opt, sizeof(int)));
-	// 初始位置和半径
-	CK(cudaMemcpyToSymbol(contact_angle_dir_gpu, &contact_angle_dir, sizeof(int)));
-    CK(cudaMemcpyToSymbol(phi_contact_pho_A_gpu, &phi_contact_pho_A, sizeof(double)));
-    CK(cudaMemcpyToSymbol(delta_pho_A_gpu, &delta_pho_A, sizeof(double)));
-	CK(cudaMemcpyToSymbol(x_ini_gpu, &x_ini, sizeof(int)));//暂时没用
-	CK(cudaMemcpyToSymbol(y_ini_gpu, &y_ini, sizeof(int)));
-	CK(cudaMemcpyToSymbol(radius_gpu, &radius, sizeof(double)));
-	CK(cudaMemcpyToSymbol(w_ini_gpu, &w_ini, sizeof(double)));
-	// 初始密度和温度（两组分）
-	CK(cudaMemcpyToSymbol(reducedT_w_ini_gpu, &reducedT_w_ini, sizeof(double)));
+
 	// 网格物理参数
 	CK(cudaMemcpyToSymbol(deltax_gpu, &deltax, sizeof(double)));
 	CK(cudaMemcpyToSymbol(deltat_gpu, &deltat, sizeof(double)));
 	CK(cudaMemcpyToSymbol(c_gpu, &c, sizeof(double)));
 	CK(cudaMemcpyToSymbol(cs2_gpu, &cs2, sizeof(double)));
-	// 状态方程参数
-	CK(cudaMemcpyToSymbol(a_w_gpu, &a_w, sizeof(double)));
-	CK(cudaMemcpyToSymbol(b_w_gpu, &b_w, sizeof(double)));
-	CK(cudaMemcpyToSymbol(R_w_gpu, &R_w, sizeof(double)));
-	CK(cudaMemcpyToSymbol(omega_w_gpu, &omega_w, sizeof(double)));
-	CK(cudaMemcpyToSymbol(Tc_w_gpu, &Tc_w, sizeof(double)));
-	CK(cudaMemcpyToSymbol(a_m_gpu, &a_m, sizeof(double)));
-	CK(cudaMemcpyToSymbol(b_m_gpu, &b_m, sizeof(double)));
-	CK(cudaMemcpyToSymbol(R_m_gpu, &R_m, sizeof(double)));
-	CK(cudaMemcpyToSymbol(omega_m_gpu, &omega_m, sizeof(double)));
-	CK(cudaMemcpyToSymbol(Tc_m_gpu, &Tc_m, sizeof(double)));
-	CK(cudaMemcpyToSymbol(T_gpu, &T, sizeof(double)));
 
-	CK(cudaMemcpyToSymbol(PR_scalar_gpu, &PR_scalar, sizeof(double)));
-	//CK(cudaMemcpyToSymbol(sigmaA_gpu, &sigmaA, sizeof(double)));
-
+	// PR-EOS 常数 — 已迁移到 RuntimeParams，不在此上传
+	// Li MRT 初始化参数 — 已移除，改用 configs/huang_scmp.yaml
 }
 //推进一步 LBM 的演化过程（相当于 time step 的执行器）
 // 所有步骤在 GPU 上并行进行，整合在 evolution(...) 中，便于在 main() 中统一调用。
@@ -2079,6 +2059,26 @@ __host__ void outputvtk_append_hydrate(const std::string& vtk_path,
  * ===================================================================== */
 #ifdef HUANG_256_BUILD
 
+/* ── Compute ρ = Σ f_i from distribution functions ───────────────── */
+__global__ void compute_rho_from_fin_gpu(
+    double*       rho,
+    const double* fin,
+    const int*    pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    // Compute density for all nodes (fluid, boundary, ghost)
+    // Ghost nodes need ρ for ψ BC mirror
+    double sum = 0.0;
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        sum += fin[findindex_distfun_gpu(x, y, k)];
+    }
+    rho[idx] = fmax(sum, 1e-8);
+}
+
 /* ── SCMP Carnahan-Starling EOS kernel ─────────────────────────── */
 __global__ void compute_p_psi_scmp_cs(
     const double* __restrict__ rho,
@@ -2199,7 +2199,7 @@ __global__ void compute_adsorption_force_scmp(
     Fy_ads[idx] = -G_ads * psi0 * sum_y;
 }
 
-/* ── ψ-based ghost BC for contact angle (paper Eq. 34) ─────── */
+/* ── Scheme IV: ψ-based geometric ghost BC for contact angle ── */
 __global__ void update_ghost_psi_bc(
     double*       psi,
     const int*    pointsflag,
@@ -2209,20 +2209,60 @@ __global__ void update_ghost_psi_bc(
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x >= NX || y >= NY) return;
     int idx = findindex_scalar_gpu(x, y);
-    // Only operate on ghost nodes at bottom wall (y==0)
-    if (pointsflag[idx] != -1 || y != 0) return;
 
-    // Dual mode: theta<0 → direct psi override; theta>=0 → cos²(θ/2) interpolation
-    if (theta_target_rad < 0.0) {
-        // Direct ghost ψ: use absolute value (e.g., θ=-0.15 → ψ_ghost=0.15)
-        psi[idx] = -theta_target_rad;
-    } else {
-        double psi_l = 0.15;
-        double psi_g = 0.01;
-        double cos_half = cos(theta_target_rad * 0.5);
-        double sin_half = sin(theta_target_rad * 0.5);
-        psi[idx] = psi_l * cos_half * cos_half + psi_g * sin_half * sin_half;
+    // Only operate on ghost nodes at walls
+    if (pointsflag[idx] != -1) return;
+
+    // ── Top ghost (y == NY-1): mirror ψ from y=NY-3 (mode 2 flat-interface) ──
+    if (y == NY - 1) {
+        int idx_src = findindex_scalar_gpu(x, NY - 3);
+        psi[idx] = psi[idx_src];
+        if (psi[idx] < 0.0) psi[idx] = 0.0;
+        return;
     }
+
+    // ── Bottom ghost (y == 0) ──
+    if (y != 0) return;
+
+    // theta==0: Scheme II neutral — mirror psi from y=2
+    double cot_theta;
+    if (fabs(theta_target_rad) < 1e-12) {
+        int idx2 = findindex_scalar_gpu(x, 2);
+        psi[idx] = psi[idx2];
+        return;
+    }
+
+    // Scheme IV: ψ_ghost = ψ_2 + |∇ψ|_1 · cot(θ)
+    //   where |∇ψ|_1 is gradient magnitude at the first fluid layer (y=1)
+    //   cot(θ) = tan(π/2 − θ) per Eq. (34)
+    cot_theta = 1.0 / tan(theta_target_rad);
+
+    // ψ at y=2 (second fluid layer)
+    int idx2 = findindex_scalar_gpu(x, 2);
+    double psi_2 = psi[idx2];
+
+    // Central-difference gradient at y=1:
+    //   ∂ψ/∂x ≈ (ψ(x+1,y=1) − ψ(x-1,y=1)) / 2
+    //   ∂ψ/∂y ≈ (ψ(x,y=2) − ψ(x,y=0)) / 2    (ψ(x,y=0) is OLD ghost value)
+    int xl = (x == 0) ? 0 : x - 1;
+    int xr = (x == NX - 1) ? (NX - 1) : x + 1;
+    double psi_xl = psi[findindex_scalar_gpu(xl, 1)];
+    double psi_xr = psi[findindex_scalar_gpu(xr, 1)];
+    double grad_x = (psi_xr - psi_xl) * 0.5;  // *0.5 for central diff if both neighbours exist
+
+    double psi_y0 = psi[idx];                  // current (old) ghost ψ at (x,0)
+    double grad_y = (psi_2 - psi_y0) * 0.5;
+
+    double grad_mag = sqrt(grad_x * grad_x + grad_y * grad_y);
+
+    // ψ_ghost_new = ψ_2 + |∇ψ| · cot(θ)
+    // For θ→90°: cot→0 → ψ_ghost→ψ_2 (neutral)
+    // For θ→0°:  cot→+∞ → ψ_ghost>>ψ_2 (superhydrophilic)
+    // For θ→180°: cot→-∞ → ψ_ghost<<ψ_2 (superhydrophobic)
+    psi[idx] = psi_2 + grad_mag * cot_theta;
+
+    // Clamp to physical range (ψ ≥ 0)
+    if (psi[idx] < 0.0) psi[idx] = 0.0;
 }
 
 /* ── Add adsorption force to total force ────────────────────── */
@@ -2266,7 +2306,7 @@ __global__ void compute_velocity_scmp(
     uy[idx] = (uy[idx] + 0.5 * Fy[idx] * deltat_gpu) / rho_safe;
 
     // Numerical guard
-    const double UMAX = 0.15;
+    const double UMAX = get_huang_u_max();
     double u2 = ux[idx]*ux[idx] + uy[idx]*uy[idx];
     if (u2 > UMAX*UMAX) {
         double s = UMAX / sqrt(u2);
@@ -2319,11 +2359,12 @@ __global__ void compute_Q_huang_gpu(
 
     double Fx = Fx_mol[idx], Fy = Fy_mol[idx];
     double F2 = Fx*Fx + Fy*Fy;
-    const double PSI_CUT = 1e-3;
+    const double PSI_CUT = get_huang_psi_cut();
     double psi2 = psi[idx]*psi[idx] + PSI_CUT*PSI_CUT;
     double cs_G_loc = get_cs_G();
-    double denom = fabs(cs_G_loc) * psi2 * c_gpu * c_gpu;
-    denom = fmax(denom, 1e-12);
+    // USE raw G (not |G|) — sign matters for Q_m direction
+    double denom = cs_G_loc * psi2 * c_gpu * c_gpu;
+    denom = fmax(fabs(denom), 1e-12) * (denom < 0 ? -1.0 : 1.0);  // preserve sign, clamp |denom|
 
     double k1 = get_k1_huang();
     double k2 = get_k2_huang();
@@ -2368,12 +2409,11 @@ __global__ void compute_pressure_tensor_scmp(
     double rho_safe = fmax(rho[idx], 1e-6);
     double psi0 = psi[idx];
     double G = get_cs_G();
-    double cs2 = c_gpu * c_gpu / 3.0;  // c_s² = c²/3
 
     // ── Discrete pressure tensor (paper Eq. 34) ──
     // P_discrete,αβ = ρc_s² δ_αβ + (G/2)·ψ Σ_i w_F(|e_i|²)·ψ(x+e_i)·e_iα·e_iβ
-    double pd_xx = cs2 * rho_safe;
-    double pd_yy = cs2 * rho_safe;
+    double pd_xx = cs2_gpu * rho_safe;
+    double pd_yy = cs2_gpu * rho_safe;
     double pd_xy = 0.0;
 
     #pragma unroll
@@ -2447,11 +2487,12 @@ __global__ void mrt_collide_single_component_gpu(
         double mk = min_m[idxk];
         double meq_k = meq_gpu(k, rho_loc, u_all);
 
-        // Apply alpha_meq to slot 1 per Huang & Wu (2016) Eq. 5
-        if (k == 1) {
-            // meq[1] = (-2 + 3α|u|²)ρ
+        // Apply α to slot 2 (ε) per Huang & Wu (2016) Eq.(5):
+        //   m_eq[2] = α·ρ − 3ρ|u|²/c²
+        // (slot 1 / e moment is standard: m_eq[1] = −2ρ + 3ρ|u|²/c²)
+        if (k == 2) {
             double u2 = u_all[0]*u_all[0] + u_all[1]*u_all[1];
-            meq_k = (-2.0 + 3.0 * alpha_m * u2) * rho_loc;
+            meq_k = (alpha_m - 3.0 * u2) * rho_loc;
         }
 
         mout_m[idxk] = mk - A_a_gpu[k] * (mk - meq_k)
@@ -2520,6 +2561,61 @@ __global__ void boundary_scmp_gpu(
             fin[idxk] = fout[idxk_nb];
         }
     }
+}
+
+/* ── Zou/He no-slip bottom wall for D2Q9 (mode 4 contact angle) ─ */
+__global__ void zouhe_bottom_wall_gpu(
+    double* fin, const double* fout,
+    const double* Fx, const double* Fy,
+    const int* pointsflag)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+
+    // Only active for mode 4 (contact angle) — bottom wall with droplet
+    if (get_huang_init_mode() != 4) return;
+
+    // Only for fluid nodes at y=1 adjacent to bottom ghost
+    if (y != 1) return;
+    int idx = findindex_scalar_gpu(x, y);
+    if (pointsflag[idx] != 1) return;
+    int idx_below = findindex_scalar_gpu(x, 0);
+    if (pointsflag[idx_below] != -1) return;
+
+    // Known distributions (streamed from fluid neighbours):
+    //   f0 (rest), f1 (right), f3 (left),
+    //   f4 (down), f7 (down-left), f8 (down-right)
+    double f0 = fin[findindex_distfun_gpu(x, y, 0)];
+    double f1 = fin[findindex_distfun_gpu(x, y, 1)];
+    double f3 = fin[findindex_distfun_gpu(x, y, 3)];
+    double f4 = fin[findindex_distfun_gpu(x, y, 4)];
+    double f7 = fin[findindex_distfun_gpu(x, y, 7)];
+    double f8 = fin[findindex_distfun_gpu(x, y, 8)];
+
+    // Total force at this node (molecular + adsorption + body)
+    double Fx_loc = (Fx != nullptr) ? Fx[idx] : 0.0;
+    double Fy_loc = (Fy != nullptr) ? Fy[idx] : 0.0;
+
+    // ── Zou/He D2Q9 bottom wall reconstruction ──
+    // Constraint: Σ f_i·e_i = -F/2  for no-slip (u=0)
+    //
+    // Non-equilibrium bounce-back normal to wall: f2 - f2^eq = f4 - f4^eq
+    // With u=0: f2^eq = f4^eq = ρ/9  →  f2 = f4
+    double f2 = f4;
+
+    // x-momentum: (f1 - f3) + (f5 - f6) + (f8 - f7) = -Fx/2
+    // y-momentum: (f2 + f5 + f6) - (f4 + f7 + f8) = -Fy/2
+    //   using f2 = f4:  f5 + f6 = f7 + f8 - Fy/2
+    //
+    // Solving:
+    double f5 = 0.5 * (f3 - f1) + f7 - 0.25 * (Fx_loc + Fy_loc);
+    double f6 = 0.5 * (f1 - f3) + f8 + 0.25 * (Fx_loc - Fy_loc);
+
+    // Overwrite upward-pointing distributions (f2, f5, f6)
+    fin[findindex_distfun_gpu(x, y, 2)] = f2;
+    fin[findindex_distfun_gpu(x, y, 5)] = f5;
+    fin[findindex_distfun_gpu(x, y, 6)] = f6;
 }
 
 /* ── SCMP Tanh droplet / flat-interface initialization ───────── */
@@ -2597,6 +2693,24 @@ __global__ void init_all_scmp_gpu(
     if (mode == 3) {
         // Uniform liquid for channel flow
         rho[idx] = fmax(get_huang_rho_l(), 1e-6);
+    } else if (mode == 2) {
+        // ── Slab geometry for flat-interface coexistence ──
+        // Two interfaces (gas-liquid-gas) compatible with periodic y-BC.
+        // yc = slab centre, R0 = slab half-width, W = interface thickness.
+        double y_lo = yc - R0;   // lower interface position
+        double y_hi = yc + R0;   // upper interface position
+        double tfactor = get_huang_tanh_factor();
+
+        // Sigmoid transitions: 0→1 at lower interface, 1→0 at upper interface
+        double s_lo = 0.5 * (1.0 + tanh(tfactor * ((double)y - y_lo) / W));
+        double s_hi = 0.5 * (1.0 + tanh(tfactor * (y_hi - (double)y) / W));
+
+        // Liquid where both sigmoids ≈ 1 (slab interior), gas elsewhere
+        rho[idx] = rho_g_est + (rho_l_est - rho_g_est) * s_lo * s_hi;
+
+        // Clamp to physical range
+        rho[idx] = fmax(rho[idx], 1e-6);
+        rho[idx] = fmin(rho[idx], get_huang_rho_max_init());
     } else {
         double r = 0.0;
         if (mode == 1 || mode == 4) {
@@ -2605,15 +2719,16 @@ __global__ void init_all_scmp_gpu(
             double dy_c = (double)y - yc;
             r = sqrt(dx_c*dx_c + dy_c*dy_c);
         } else {
-            // Flat interface: y-based
+            // Flat interface: y-based (kept for backward compatibility)
             r = (double)y;
         }
 
-        rho[idx] = rho_mid + rho_amp * tanh(2.0 * (R0 - r) / W);
+        double tfactor = get_huang_tanh_factor();
+        rho[idx] = rho_mid + rho_amp * tanh(tfactor * (R0 - r) / W);
 
         // Clamp to physical range
         rho[idx] = fmax(rho[idx], 1e-6);
-        rho[idx] = fmin(rho[idx], 1.0);
+        rho[idx] = fmin(rho[idx], get_huang_rho_max_init());
     }
 
     // Initialize f to equilibrium at u=0
@@ -2621,11 +2736,12 @@ __global__ void init_all_scmp_gpu(
     #pragma unroll
     for (int k = 0; k < Q; ++k) {
         double fk = feq_gpu(k, rho[idx], u0);
+        double meq_k = meq_gpu(k, rho[idx], u0);
         int idxk = findindex_distfun_gpu(x, y, k);
         fin[idxk]  = fk;
         fout[idxk] = fk;
-        min_m[idxk] = 0.0;
-        mout_m[idxk] = 0.0;
+        min_m[idxk] = meq_k;    // was 0.0 → fixed: must be equilibrium
+        mout_m[idxk] = meq_k;   // was 0.0 → fixed
     }
 }
 
@@ -2647,11 +2763,15 @@ __host__ void evolution_scmp(
     dim3 grid_scmp((NX + nThreadsx - 1) / nThreadsx,
                    (NY + nThreadsy - 1) / nThreadsy, 1);
 
+    // ── CRITICAL: recompute ρ = Σ f_i after streaming (density evolves!) ──
+    compute_rho_from_fin_gpu<<<grid_scmp, threads>>>(rho, fin, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
     compute_p_psi_scmp_cs<<<grid_scmp, threads>>>(rho, pressure, psi, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 
-    // ── ψ-based ghost BC: theta>0 → cos² formula (deg→rad); theta<0 → |theta|=direct ψ
-    if (fabs(theta_contact_deg) > 1e-12) {
+    // ── ψ-based ghost BC: always apply (theta==0 → mirror y=2; theta>0 → cos²; theta<0 → direct ψ)
+    {
         double arg = (theta_contact_deg > 0.0) ? (theta_contact_deg * 0.017453292519943295) : theta_contact_deg;
         update_ghost_psi_bc<<<grid_scmp, threads>>>(psi, pointsflag, arg);
         CUDA_CHECK(cudaGetLastError());
@@ -2685,6 +2805,10 @@ __host__ void evolution_scmp(
     CUDA_CHECK(cudaGetLastError());
 
     boundary_scmp_gpu<<<grid_scmp, threads>>>(fin, fout, pointsflag);
+    CUDA_CHECK(cudaGetLastError());
+
+    // ── Zou/He no-slip bottom wall (overrides bounce-back at y=1 for mode 4)
+    zouhe_bottom_wall_gpu<<<grid_scmp, threads>>>(fin, fout, Fx, Fy, pointsflag);
     CUDA_CHECK(cudaGetLastError());
 
     // Compute pressure tensor (after collision, before next step)

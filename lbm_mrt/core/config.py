@@ -107,6 +107,7 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     hg = raw.get("huang_scmp", {})
     p["pp_mode"] = hg.get("pp_mode", 0)
     p["k1_huang"] = hg.get("k1_huang", 1.0 / 12.0)
+    p["epsilon_huang"] = hg.get("epsilon_huang", -2.0 / 3.0)
     p["k2_huang"] = hg.get("k2_huang", 0.0)
     p["kd_huang"] = hg.get("kd_huang", -1.0 / 12.0)
     p["alpha_meq"] = hg.get("alpha_meq", 1.0)
@@ -122,10 +123,22 @@ def _flatten(raw: dict[str, Any]) -> dict[str, Any]:
     p["huang_init_mode"] = hg.get("huang_init_mode", 1)
     p["huang_rho_g"] = hg.get("huang_rho_g", 0.0)
     p["huang_rho_l"] = hg.get("huang_rho_l", 0.0)
+    # — additional SCMP params read by solver (sim_utils.cu lines 353-358) —
+    p["G_ads"] = hg.get("G_ads", 0.0)
+    p["theta_contact_deg"] = hg.get("theta_contact_deg", 0.0)
+    p["huang_psi_l_ref"] = hg.get("huang_psi_l_ref", 0.15)
+    p["huang_psi_g_ref"] = hg.get("huang_psi_g_ref", 0.01)
+    p["tau_huang"] = hg.get("tau_huang", 1.5)
+    p["Lambda_huang"] = hg.get("Lambda_huang", 1.0 / 12.0)
+    p["huang_u_max"] = hg.get("huang_u_max", 0.15)
+    p["huang_psi_cut"] = hg.get("huang_psi_cut", 1.0e-3)
+    p["huang_tanh_factor"] = hg.get("huang_tanh_factor", 2.0)
+    p["huang_rho_max_init"] = hg.get("huang_rho_max_init", 1.0)
 
-    # ── checkpoint ────────────────────────────────────────────────────────
+    # ── output / checkpoint ───────────────────────────────────────────────
     c = raw.get("checkpoint", {})
     p["ENABLE_CKPT"] = c.get("enable", True)
+    p["OUTPUT_EVERY"] = c.get("every", 5000)
     p["CP_EVERY"] = c.get("every", 50000)
     p["CP_KEEP"] = c.get("keep", 3)
     p["CP_RESUME"] = c.get("resume", 1)

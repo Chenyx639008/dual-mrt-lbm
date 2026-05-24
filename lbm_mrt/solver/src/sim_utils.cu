@@ -130,7 +130,7 @@ static inline unsigned long long fnv1a64(const void* data, size_t n,
 static unsigned long long hash_runtime_params(const RuntimeParams& p){
     unsigned long long h = 1469598103934665603ULL;
     auto mix = [&](const auto& v){ h = fnv1a64(&v, sizeof(v), h); };
-    mix(p.init_eq); mix(p.drive); mix(p.morph);
+    mix(p.init_eq); mix(p.morph);
     mix(p.r_obs); mix(p.l_gap); mix(p.coat_thick); mix(p.r_mid);
     mix(p.Sw); mix(p.water_seed); mix(p.thetaA_quartz_deg); mix(p.thetaA_hydrate_deg);
     mix(p.GBw_quartz); mix(p.GBw_hydrate); mix(p.GAw_m); mix(p.GAw_c);
@@ -141,6 +141,7 @@ static unsigned long long hash_runtime_params(const RuntimeParams& p){
     mix(p.CP_EVERY); mix(p.CP_KEEP); mix(p.CP_RESUME); mix(p.ENABLE_CKPT);
     mix(p.OUTPUT_EVERY); mix(p.eq_tol_rel); mix(p.eq_need_consec); mix(p.eq_max_steps); mix(p.eq_q_abs_eps);
     mix(p.flow_tol_rel); mix(p.flow_need_consec); mix(p.flow_max_steps);
+    mix(p.epsilon_huang); mix(p.k2_huang);
     h = fnv1a64(p.geom_file.data(), p.geom_file.size(), h);
     return h;
 }
@@ -304,9 +305,8 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
     auto getu64=[&](const char* k,unsigned long long& x){ if(P.count(k)) x=(unsigned long long)P[k]; };
         // —— 逐字段覆盖默认值 —— //
 
-    // 场景/驱动开关
+    // 场景
     geti("init_eq", r.init_eq);
-    geti("drive",   r.drive);
 
     // 几何
     geti("morph", r.morph); get("r_obs", r.r_obs); get("l_gap", r.l_gap);
@@ -341,8 +341,8 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
 
     // ── Huang & Wu (2016) SCMP 参数 ──
     geti("pp_mode", r.pp_mode);
-    get("k1_huang", r.k1_huang); get("k2_huang", r.k2_huang);
-    get("kd_huang", r.kd_huang); get("alpha_meq", r.alpha_meq);
+    get("epsilon_huang", r.epsilon_huang);
+    get("alpha_meq", r.alpha_meq);
     get("cs_a", r.cs_a); get("cs_b", r.cs_b); get("cs_R", r.cs_R);
     get("cs_T", r.cs_T); get("cs_G", r.cs_G);
     get("huang_R0", r.huang_R0); get("huang_xc", r.huang_xc);
@@ -350,7 +350,10 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
     get("huang_rho_g", r.huang_rho_g); get("huang_rho_l", r.huang_rho_l);
     get("G_ads", r.G_ads_scmp);  // SCMP contact angle calibration
     get("theta_contact_deg", r.theta_contact_deg);  // ψ-based contact angle
+    get("huang_psi_l_ref", r.huang_psi_l_ref); get("huang_psi_g_ref", r.huang_psi_g_ref);
     get("tau_huang", r.tau_huang); get("Lambda_huang", r.Lambda_huang);
+    get("huang_u_max", r.huang_u_max); get("huang_psi_cut", r.huang_psi_cut);
+    get("huang_tanh_factor", r.huang_tanh_factor); get("huang_rho_max_init", r.huang_rho_max_init);
     geti("huang_init_mode", r.huang_init_mode);
 
     geti("CP_EVERY", r.CP_EVERY);
@@ -509,7 +512,7 @@ void print_params_summary(const RuntimeParams& p){
 
     std::cout
         << "[SCENE] init_eq=" << p.init_eq
-        << " | drive=" << p.drive
+        << " | morph=" << p.morph
         << " | drive_mode=" << p.drive_mode << "\n"
 
         << "[GEOM ] morph=" << p.morph
@@ -537,11 +540,14 @@ void print_params_summary(const RuntimeParams& p){
         << " | sigmaA=" << p.sigmaA << "\n"
 
         << "[HUANG] pp_mode=" << p.pp_mode
-        << " | k1=" << p.k1_huang << " k2=" << p.k2_huang
-        << " kd=" << p.kd_huang << " alpha_meq=" << p.alpha_meq << "\n"
+        << " | epsilon=" << p.epsilon_huang
+        << " k2=" << p.k2_huang
+        << " (k1=" << -p.epsilon_huang/8.0 - p.k2_huang << ")\n"        << " alpha_meq=" << p.alpha_meq << "\n"
         << "         CS: a=" << p.cs_a << " b=" << p.cs_b
         << " R=" << p.cs_R << " T=" << p.cs_T << " G=" << p.cs_G << "\n"
         << "         G_ads=" << p.G_ads_scmp << " θ_contact=" << p.theta_contact_deg << "°"
+        << " ψ_l=" << p.huang_psi_l_ref << " ψ_g=" << p.huang_psi_g_ref << "\n"
+        << "         UMAX=" << p.huang_u_max << " psi_cut=" << p.huang_psi_cut
         << " init: mode=" << p.huang_init_mode
         << " R0=" << p.huang_R0 << " xc=" << p.huang_xc
         << " yc=" << p.huang_yc << " W=" << p.huang_W << "\n"
@@ -618,10 +624,15 @@ void push_device_constants(const RuntimeParams& p){
     CK(cudaMemcpyToSymbol(d_sigmaA,&p.sigmaA,sizeof(double)));
 
     // ── Huang & Wu (2016) SCMP ──
+    // Compute k₁, k₂ from user-facing parameters ε = −8(k₁ + k₂).
+    //   k₂ = user value (default 0);  k₁ = −ε/8 − k₂.
+    // For normal operation (paper §6.3): keep k₂ = 0 and tune ε alone.
+    // For paper Fig.5 σ⟂k₂ verification: set k₂ ≠ 0 to test σ independence.
+    double k2_computed = p.k2_huang;
+    double k1_computed = -p.epsilon_huang / 8.0 - k2_computed;
     CK(cudaMemcpyToSymbol(d_pp_mode,   &p.pp_mode,   sizeof(int)));
-    CK(cudaMemcpyToSymbol(d_k1_huang,  &p.k1_huang,  sizeof(double)));
-    CK(cudaMemcpyToSymbol(d_k2_huang,  &p.k2_huang,  sizeof(double)));
-    CK(cudaMemcpyToSymbol(d_kd_huang,  &p.kd_huang,  sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_k1_huang,  &k1_computed, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_k2_huang,  &k2_computed, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_alpha_meq, &p.alpha_meq, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_cs_a,      &p.cs_a,      sizeof(double)));
     CK(cudaMemcpyToSymbol(d_cs_b,      &p.cs_b,      sizeof(double)));
@@ -637,8 +648,14 @@ void push_device_constants(const RuntimeParams& p){
     CK(cudaMemcpyToSymbol(d_huang_init_mode, &p.huang_init_mode, sizeof(int)));
     CK(cudaMemcpyToSymbol(d_G_ads_scmp, &p.G_ads_scmp, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_theta_contact_deg, &p.theta_contact_deg, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_psi_l_ref, &p.huang_psi_l_ref, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_psi_g_ref, &p.huang_psi_g_ref, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_tau_huang,  &p.tau_huang,  sizeof(double)));
     CK(cudaMemcpyToSymbol(d_Lambda_huang, &p.Lambda_huang, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_u_max, &p.huang_u_max, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_psi_cut, &p.huang_psi_cut, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_tanh_factor, &p.huang_tanh_factor, sizeof(double)));
+    CK(cudaMemcpyToSymbol(d_huang_rho_max_init, &p.huang_rho_max_init, sizeof(double)));
 
 
     double A_a_host[9], A_b_host[9];
@@ -1190,7 +1207,9 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
         summary << "elapsed_s " << elapsed << "\n";
         summary << "MLUPS " << (final_step * NX * NY / elapsed / 1e6) << "\n";
         summary << "pp_mode " << P.pp_mode << "\n";
-        summary << "k1_huang " << P.k1_huang << "\n";
+        summary << "epsilon_huang " << P.epsilon_huang << "\n";
+        summary << "k2_huang " << P.k2_huang << "\n";
+        summary << "k1_computed " << (-P.epsilon_huang/8.0 - P.k2_huang) << "\n";
         summary << "cs_T " << P.cs_T << "\n";
         summary << "cs_a " << P.cs_a << "\n";
     }
