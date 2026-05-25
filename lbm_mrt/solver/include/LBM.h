@@ -4,8 +4,8 @@
 /* 只保留最必要的头文件，不要把 <iostream> <fstream> 等重头文件塞进来 */
 
 // ── 编译期守卫：Huang SCMP 与水合物物理互斥 ──
-#if defined(HUANG_256_BUILD) && defined(HYDRATE_ENABLE)
-#error "HUANG_256_BUILD and HYDRATE_ENABLE are mutually exclusive. Use separate builds."
+#if (defined(HUANG_256_BUILD) || defined(HUANG_POROUS_BUILD)) && defined(HYDRATE_ENABLE)
+#error "HUANG_*_BUILD and HYDRATE_ENABLE are mutually exclusive. Use separate builds."
 #endif
 
 #include <cuda_runtime.h>
@@ -35,6 +35,18 @@ constexpr unsigned int NX      = HUANG_NX;
 constexpr unsigned int NY      = HUANG_NY;
 constexpr unsigned int NSTEPS  = HUANG_NSTEPS;
 constexpr unsigned int NOUTPUT = HUANG_NOUTPUT;
+#elif defined(HUANG_POROUS_BUILD)
+#ifndef HUANG_NX
+#error "HUANG_POROUS_BUILD requires -DHUANG_NX=<N>"
+#endif
+#ifndef HUANG_NY
+#error "HUANG_POROUS_BUILD requires -DHUANG_NY=<N>"
+#endif
+constexpr unsigned int SCALE   = 1;
+constexpr unsigned int NX      = HUANG_NX;
+constexpr unsigned int NY      = HUANG_NY;
+constexpr unsigned int NSTEPS  = 200000;
+constexpr unsigned int NOUTPUT = 20000;
 #else
 constexpr unsigned int SCALE   = 1;
 constexpr unsigned int NX      = 339* SCALE;
@@ -98,6 +110,7 @@ namespace phys
 #ifdef LBM_DEFINE_GLOBALS
 __constant__ double GAw_by_mat_gpu[256];
 __constant__ double GBw_by_mat_gpu[256];
+__constant__ double d_theta_by_mat_rad[256];
 __device__ unsigned char* d_wall_mat = nullptr;
 __device__ double*        d_GAw_map  = nullptr;
 __device__ double*        d_GBw_map  = nullptr;
@@ -143,6 +156,7 @@ __constant__ double d_huang_tanh_factor, d_huang_rho_max_init;
 // Group A: Wettability & wall maps
 extern __device__ __constant__ double GAw_by_mat_gpu[256];
 extern __device__ __constant__ double GBw_by_mat_gpu[256];
+extern __device__ __constant__ double d_theta_by_mat_rad[256];
 extern __device__ unsigned char* d_wall_mat;
 extern __device__ double*        d_GAw_map;
 extern __device__ double*        d_GBw_map;
@@ -338,7 +352,7 @@ void free_wall_and_wettability_maps_host();   // 释放以上映射内存
 
 void build_circle_array(Porous_host& porous, int morph, double r_obs, double coat_thick, double r_mid, double l_gap );
 void upload_obstacles(const Porous_host& h);
-void read_tecplot_to_flag(const std::string& filename, std::vector<int>& host_flag);
+void read_tecplot_to_flag(const std::string& filename, std::vector<int>& host_flag, std::vector<unsigned char>& host_mat);
 void init_geometry(int* pointsflag);
 void init_all(int* pointsflag, double* rho_A,double* fin_A, double* fout_A, double*min_A , double*mout_A, double* rho_B,double* fin_B, double* fout_B, double* min_B ,double*mout_B);
 inline void init_all(const Mix_dev& mix, const Fluid_dev& A,const Fluid_dev& B){
@@ -394,7 +408,7 @@ void outputvtk_append_hydrate(const std::string& vtk_path,
 #endif
 
 // ── Huang & Wu (2016) SCMP (gated by HUANG_256_BUILD at compile time) ──
-#ifdef HUANG_256_BUILD
+#if defined(HUANG_256_BUILD) || defined(HUANG_POROUS_BUILD)
 void evolution_scmp(
     double* rho,   double* ux,   double* uy,
     double* psi,   double* pressure,
@@ -404,9 +418,10 @@ void evolution_scmp(
     double* min_m, double* mout_m,
     double* S,     double* C,
     double* p_xx,  double* p_yy, double* p_xy,
-    double  theta_contact_deg,
+    const unsigned char* wall_mat,
     int*    pointsflag);
 
+void scmp_init_geometry(int* pointsflag, unsigned char* wall_mat);
 void init_all_scmp(
     double* rho,   double* fin,   double* fout,
     double* min_m, double* mout_m,

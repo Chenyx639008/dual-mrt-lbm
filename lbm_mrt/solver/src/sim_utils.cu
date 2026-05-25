@@ -648,6 +648,9 @@ void push_device_constants(const RuntimeParams& p){
     CK(cudaMemcpyToSymbol(d_huang_init_mode, &p.huang_init_mode, sizeof(int)));
     CK(cudaMemcpyToSymbol(d_G_ads_scmp, &p.G_ads_scmp, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_theta_contact_deg, &p.theta_contact_deg, sizeof(double)));
+    { auto ti = [](double t) { double x = -1.78e-4*t*t*t + 4.95e-2*t*t - 3.02*t + 84.5; return x * M_PI / 180.0; };
+      double ht[256]={0}; ht[1]=ti(p.thetaA_quartz_deg); ht[2]=ti(p.thetaA_hydrate_deg);
+      CK(cudaMemcpyToSymbol(d_theta_by_mat_rad, ht, sizeof(ht))); }
     CK(cudaMemcpyToSymbol(d_huang_psi_l_ref, &p.huang_psi_l_ref, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_huang_psi_g_ref, &p.huang_psi_g_ref, sizeof(double)));
     CK(cudaMemcpyToSymbol(d_tau_huang,  &p.tau_huang,  sizeof(double)));
@@ -704,7 +707,7 @@ void build_and_upload_geometry_from_tecplot(const RuntimeParams& P,
                                             Mix_dev& M_dev)
 {
     std::vector<int> host_flag;
-    read_tecplot_to_flag(P.geom_file, host_flag);  // geom_file 来自 params.txt
+    std::vector<unsigned char> hmd; read_tecplot_to_flag(P.geom_file, host_flag, hmd);  // geom_file 来自 params.txt
 
     // 把 host_flag 拷贝到 device 的 pointsflag
     checkCudaErrors(cudaMemcpy(M_dev.pointsflag,
@@ -1100,7 +1103,7 @@ void write_run_summary(const RunResult& R, int interval, const RuntimeParams& P)
  * ── Huang & Wu (2016) SCMP run loop ──
  * Single-component multiphase on 256×256 periodic domain.
  * ===================================================================== */
-#ifdef HUANG_256_BUILD
+#if defined(HUANG_256_BUILD) || defined(HUANG_POROUS_BUILD)
 void run_scmp_huang(const RuntimeParams& P, const char* params_path)
 {
     // ── Allocate single fluid device memory ──
@@ -1113,11 +1116,32 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
     cudaMalloc(&pointsflag_dev, N * sizeof(int));
     cudaMemset(pointsflag_dev, 0, N * sizeof(int));
 
-    // ── Init device constants and SCMP initial conditions ──
+    // ── Load geometry from .plt ──
+    std::vector<unsigned char> hm_geom;  // stored for wall_mat upload
+    if (!P.geom_file.empty()) {
+        std::vector<int> hf;
+        read_tecplot_to_flag(P.geom_file, hf, hm_geom);
+        checkCudaErrors(cudaMemcpy(pointsflag_dev, hf.data(), N*sizeof(int), cudaMemcpyHostToDevice));
+        unsigned char* dm = nullptr;
+        cudaMemcpyFromSymbol(&dm, d_wall_mat, sizeof(dm));
+        if (dm) checkCudaErrors(cudaMemcpy(dm, hm_geom.data(), N, cudaMemcpyHostToDevice));
+        int nf = 0; for (int v : hf) if (v > 0) nf++;
+        printf("[scmp-porous] fluid nodes (from .plt): %d / %zu\n", nf, N);
+    }
+
+    // ── Init device constants (sets up e_gpu) ──
     init_device_variable();
     push_device_constants(P);
     dbg_consts_once<<<1,1>>>();
     cudaDeviceSynchronize();
+
+    // ── Mark boundary & ghost (requires e_gpu from init_device_variable) ──
+    if (!P.geom_file.empty()) {
+        unsigned char* dm = nullptr;
+        cudaMemcpyFromSymbol(&dm, d_wall_mat, sizeof(dm));
+        scmp_init_geometry(pointsflag_dev, dm);
+        printf("[scmp-porous] geometry loaded via scmp_init_geometry (%dx%d)\n", NX, NY);
+    }
 
     init_all_scmp(F.rho, F.fin, F.fout, F.min, F.mout, pointsflag_dev);
     cudaDeviceSynchronize();
@@ -1146,6 +1170,9 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
     printf("[scmp] Starting SCMP time loop: %d steps, output every %d\n",
            static_cast<int>(NSTEPS), P.OUTPUT_EVERY);
 
+    unsigned char* wall_mat_dev = nullptr;
+    cudaMemcpyFromSymbol(&wall_mat_dev, d_wall_mat, sizeof(wall_mat_dev));
+
     auto t_start = std::chrono::high_resolution_clock::now();
 
     // ── Time loop ──
@@ -1157,7 +1184,7 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
             F.fin, F.fout, F.min, F.mout,
             F.S, F.C,
             F.p_xx, F.p_yy, F.p_xy,
-            P.theta_contact_deg,
+            wall_mat_dev,
             pointsflag_dev);
 
         // Periodic output

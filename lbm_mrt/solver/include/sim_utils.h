@@ -329,7 +329,7 @@ RunResult run_equilibrate_then_flow(Fluid_dev& A, Fluid_host& AH,
 /* --------- 摘要输出 --------- */
 void write_run_summary(const RunResult& R, int interval, const RuntimeParams& P);
 
-// ── Huang & Wu (2016) SCMP (gated by HUANG_256_BUILD at compile time) ──
-#ifdef HUANG_256_BUILD
+// ── Huang & Wu (2016) SCMP ──
+#if defined(HUANG_256_BUILD) || defined(HUANG_POROUS_BUILD)
 void run_scmp_huang(const RuntimeParams& P, const char* params_path);
 #endif

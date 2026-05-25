@@ -77,6 +77,12 @@ struct SteadyMonitor {
                          double& QT) const;                     // ★ 改：增加 QT 出参
     bool   compare_and_update(double QA, double QB, double QT, int step);
 
+    // ── SCMP single-phase flow rate (no B-phase, no dominance mask) ──
+    void   compute_Q_scmp(const double* ux, const double* rho,
+                          const int* pointsflag,
+                          double& Q, int nTot) const;
+    bool   compare_and_update_single(double Q, int step);
+
     // 一次性准备
     void   prepare_domain(const Mix_dev& mix_dev);
 

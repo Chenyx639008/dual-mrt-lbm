@@ -25,9 +25,22 @@ _BASE_SOURCES = ["main.cu", "LBM.cu", "steady_monitor.cu", "sim_utils.cu"]
 _HYDRATE_SOURCES = ["hydrate.cu", "hydrate_vop.cu"]
 
 
+def _detect_plt_dimensions(plt_path: str) -> tuple[int, int]:
+    """Parse I= and J= from .plt ZONE header line."""
+    import re
+    with open(plt_path) as f:
+        for line in f:
+            m = re.search(r'I\s*=\s*(\d+).*J\s*=\s*(\d+)', line)
+            if m:
+                return int(m.group(1)), int(m.group(2))
+    raise ValueError(f"Cannot detect I,J from {plt_path}")
+
+
 def build(
     hydrate: bool = False,
     huang: bool = False,
+    porous: bool = False,
+    plt_path: str | None = None,
     grid: tuple[int, int] | None = None,
     steps: int | None = None,
     output_every: int | None = None,
@@ -41,7 +54,9 @@ def build(
     Args:
         hydrate:    If True, compile the hydrate-enabled variant.
         huang:      If True, compile the Huang & Wu (2016) SCMP variant (mcmp_huang_256).
-        grid:       Optional (NX, NY) override for the Huang build. Only used with huang=True.
+        porous:     If True, compile the porous-media SCMP variant (HUANG_POROUS_BUILD).
+        plt_path:   Path to .plt geometry file for auto-detecting IxJ grid dimensions.
+        grid:       Optional (NX, NY) override for the Huang/porous build.
         steps:      Optional HUANG_NSTEPS override for short validation runs.
         output_every: Optional HUANG_NOUTPUT override for short validation runs.
         arch:       GPU SM architecture string, e.g. "sm_120" for RTX 5090 / H100.
@@ -59,7 +74,18 @@ def build(
     source_names = _BASE_SOURCES + (_HYDRATE_SOURCES if hydrate else [])
     sources = [os.path.join(SOLVER_SRC, name) for name in source_names]
 
-    if huang:
+    # Auto-detect grid from .plt if porous mode
+    if porous and plt_path and grid is None:
+        grid = _detect_plt_dimensions(plt_path)
+        print(f"[lbm-build] auto-detected grid {grid[0]}x{grid[1]} from {plt_path}")
+
+    if porous:
+        if grid is not None:
+            nx, ny = grid
+            binary_name = f"mcmp_huang_porous_{nx}x{ny}"
+        else:
+            binary_name = "mcmp_huang_porous"
+    elif huang:
         if grid is not None:
             nx, ny = grid
             grid_suffix = f"{nx}x{ny}" if nx != ny else f"{ny}"
@@ -87,6 +113,16 @@ def build(
         "-gencode",
         f"arch={compute},code={compute}",
     ]
+    if porous:
+        cmd.append("-DHUANG_POROUS_BUILD")
+        if grid is not None:
+            nx, ny = grid
+            cmd.append(f"-DHUANG_NX={nx}")
+            cmd.append(f"-DHUANG_NY={ny}")
+        if steps is not None:
+            cmd.append(f"-DHUANG_NSTEPS={steps}")
+        if output_every is not None:
+            cmd.append(f"-DHUANG_NOUTPUT={output_every}")
     if huang:
         cmd.append("-DHUANG_256_BUILD")
         if grid is not None:
@@ -137,6 +173,17 @@ def main() -> None:
         "--huang",
         action="store_true",
         help="Build the Huang & Wu (2016) SCMP variant (mcmp_huang_256).",
+    )
+    p.add_argument(
+        "--porous",
+        action="store_true",
+        help="Build the porous-media SCMP variant (HUANG_POROUS_BUILD). Auto-detects grid from --plt.",
+    )
+    p.add_argument(
+        "--plt",
+        default=None,
+        metavar="PATH",
+        help="Path to .plt geometry file for auto-detecting IxJ grid dimensions.",
     )
     p.add_argument(
         "--grid",
@@ -197,6 +244,8 @@ def main() -> None:
         build(
             hydrate=args.hydrate,
             huang=args.huang,
+            porous=args.porous,
+            plt_path=args.plt,
             grid=grid,
             steps=args.steps,
             output_every=args.output_every,

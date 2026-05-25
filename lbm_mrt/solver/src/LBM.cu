@@ -254,9 +254,11 @@ void free_wall_and_wettability_maps_host() {
 // phase: 0=pore, 1=solid, 2=hydrate
 // 输出 host_flag：1 = 流体; -2 = 固体; -3 = 水合物
 void read_tecplot_to_flag(const std::string& filename,
-                          std::vector<int>& host_flag)
+                          std::vector<int>& host_flag,
+                          std::vector<unsigned char>& host_mat)
 {
-    host_flag.assign(NX * NY, 1);  // 默认全域流体 1
+    host_flag.assign(NX * NY, 1);
+    host_mat.assign(NX * NY, 0);  // 默认全域流体 1
 
     std::ifstream fin(filename);
     if (!fin) {
@@ -279,9 +281,13 @@ void read_tecplot_to_flag(const std::string& filename,
 
         int idx = y * NX + x;
 
-        if (std::abs(phase - 1.0f) < 1e-3f)      host_flag[idx] = -2; // 固体
-        else if (std::abs(phase - 0.5f) < 1e-3f) host_flag[idx] = -3; // 水合物
-        else                                     host_flag[idx] =  1; // 流体
+        if (std::abs(phase - 1.0f) < 1e-3f) {
+            host_flag[idx] = -2; host_mat[idx] = 1; // 石英
+        } else if (std::abs(phase - 0.5f) < 1e-3f) {
+            host_flag[idx] = -3; host_mat[idx] = 2; // 水合物
+        } else {
+            host_flag[idx] =  1; host_mat[idx] = 0; // 流体
+        }
     }
 }
 
@@ -1069,7 +1075,7 @@ __global__ void compute_p_psi_A_all(
     if (x >= NX || y >= NY) return;
     int idx = findindex_scalar_gpu(x, y);
     // —— 1) ghost layer —— 用密度直接做 psi，跳过下面的 EOS
-    if (pointsflag[idx] == -2) return;
+    if (pointsflag[idx] == -2 || pointsflag[idx] == -3) return;
 
 
     double rho_safe = fmax(rho_A[idx], 1e-5);
@@ -1189,7 +1195,7 @@ __global__ void compute_p_psi_B_all(
     if (x>=NX || y>=NY) return;
 
     int idx = findindex_scalar_gpu(x,y);
-    if (pointsflag[idx] == -2) return;
+    if (pointsflag[idx] == -2 || pointsflag[idx] == -3) return;
 
     double rho = rho_B[idx];
     /* 理想气体 EOS */
@@ -2057,7 +2063,7 @@ __host__ void outputvtk_append_hydrate(const std::string& vtk_path,
  * ── Huang & Wu (2016) SCMP (Single-Component Multiphase) ──
  * Gated by -DHUANG_256_BUILD. Carnahan-Starling EOS + Guo-MRT.
  * ===================================================================== */
-#ifdef HUANG_256_BUILD
+#if defined(HUANG_256_BUILD) || defined(HUANG_POROUS_BUILD)
 
 /* ── Compute ρ = Σ f_i from distribution functions ───────────────── */
 __global__ void compute_rho_from_fin_gpu(
@@ -2203,7 +2209,7 @@ __global__ void compute_adsorption_force_scmp(
 __global__ void update_ghost_psi_bc(
     double*       psi,
     const int*    pointsflag,
-    double        theta_target_rad)
+    const unsigned char* wall_mat)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -2224,7 +2230,9 @@ __global__ void update_ghost_psi_bc(
     // ── Bottom ghost (y == 0) ──
     if (y != 0) return;
 
-    // theta==0: Scheme II neutral — mirror psi from y=2
+    unsigned char mat = wall_mat[idx];
+    double theta_target_rad = d_theta_by_mat_rad[mat];
+    // theta==0: Scheme II neutral
     double cot_theta;
     if (fabs(theta_target_rad) < 1e-12) {
         int idx2 = findindex_scalar_gpu(x, 2);
@@ -2640,13 +2648,13 @@ __global__ void init_all_scmp_gpu(
             pointsflag[idx] = 1;
         }
     } else if (get_huang_init_mode() == 4) {
-        // Contact angle: bottom ghost only (y=0), fluid from y=1
-        // No separate boundary layer → ghost ψ directly affects fluid stencil
         if (y == 0) {
-            pointsflag[idx] = -1;  // ghost wall layer
+            pointsflag[idx] = -1;
         } else {
             pointsflag[idx] = 1;
         }
+    } else if (get_huang_init_mode() == 5) {
+        // Porous media: flag set by MCMP mark_boundary + mark_ghost
     } else {
         pointsflag[idx] = 1;
     }
@@ -2690,8 +2698,8 @@ __global__ void init_all_scmp_gpu(
     double rho_mid = 0.5 * (rho_l_est + rho_g_est);
     double rho_amp = 0.5 * (rho_l_est - rho_g_est);
 
-    if (mode == 3) {
-        // Uniform liquid for channel flow
+    if (mode == 3 || mode == 5) {
+        // Uniform liquid
         rho[idx] = fmax(get_huang_rho_l(), 1e-6);
     } else if (mode == 2) {
         // ── Slab geometry for flat-interface coexistence ──
@@ -2755,7 +2763,7 @@ __host__ void evolution_scmp(
     double* min_m, double* mout_m,
     double* S,     double* C,
     double* p_xx,  double* p_yy, double* p_xy,
-    double  theta_contact_deg,
+    const unsigned char* wall_mat,
     int*    pointsflag)
 {
     const int nThreadsx = 32, nThreadsy = 1;
@@ -2772,8 +2780,7 @@ __host__ void evolution_scmp(
 
     // ── ψ-based ghost BC: always apply (theta==0 → mirror y=2; theta>0 → cos²; theta<0 → direct ψ)
     {
-        double arg = (theta_contact_deg > 0.0) ? (theta_contact_deg * 0.017453292519943295) : theta_contact_deg;
-        update_ghost_psi_bc<<<grid_scmp, threads>>>(psi, pointsflag, arg);
+        update_ghost_psi_bc<<<grid_scmp, threads>>>(psi, pointsflag, wall_mat);
         CUDA_CHECK(cudaGetLastError());
     }
 
@@ -2815,6 +2822,80 @@ __host__ void evolution_scmp(
     compute_pressure_tensor_scmp<<<grid_scmp, threads>>>(
         rho, psi, Fx, Fy, p_xx, p_yy, p_xy, pointsflag);
     CUDA_CHECK(cudaGetLastError());
+}
+
+/* ── SCMP geometry kernels (inside SCMP guard, no cross-file deps) ── */
+
+// Kernel 1: Mark boundary nodes at fluid-solid interfaces
+__global__ void scmp_mark_boundary_gpu(int* pointsflag, unsigned char* wall_mat) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+    int f = pointsflag[idx];
+
+    // Phase 1: y=0/NY-1 -> ghost(-1), mat=1 (domain walls)
+    if (y == 0 || y == (int)NY - 1) {
+        pointsflag[idx] = -1;
+        wall_mat[idx] = 1;
+        return;
+    }
+    // Phase 2: y=1/NY-2 fluid -> boundary(0)
+    if (y == 1 || y == (int)NY - 2) {
+        if (f > 0) pointsflag[idx] = 0;
+        return;
+    }
+    // Phase 3: internal fluid(1) adjacent to solid(-2) -> boundary(0)
+    if (f == 1) {
+        bool has_solid_nb = false;
+        #pragma unroll
+        for (int k = 0; k < Q; ++k) {
+            int xp = (x + e_gpu[k][0] + NX) % NX;
+            int yp = (y + e_gpu[k][1] + NY) % NY;
+            int fnb = pointsflag[findindex_scalar_gpu(xp, yp)];
+            if (fnb == -2 || fnb == -3) { has_solid_nb = true; break; }
+        }
+        if (has_solid_nb) pointsflag[idx] = 0;
+    }
+}
+
+// Kernel 2: ONE layer solid(-2) -> ghost(-1) if adjacent to fluid(1) or boundary(0)
+__global__ void scmp_mark_ghost_gpu(int* pointsflag, unsigned char* wall_mat) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x >= NX || y >= NY) return;
+    int idx = findindex_scalar_gpu(x, y);
+
+    // Only process solid interior nodes
+    if (pointsflag[idx] != -2 && pointsflag[idx] != -3) return;
+
+    bool has_open_nb = false;
+    #pragma unroll
+    for (int k = 0; k < Q; ++k) {
+        int xp = (x + e_gpu[k][0] + NX) % NX;
+        int yp = (y + e_gpu[k][1] + NY) % NY;
+        int fnb = pointsflag[findindex_scalar_gpu(xp, yp)];
+        if (fnb >= 0) { has_open_nb = true; break; }  // fluid(1) or boundary(0)
+    }
+    if (has_open_nb) {
+        pointsflag[idx] = -1;
+        // wall_mat[idx] already set by read_tecplot_to_flag
+    }
+}
+
+// Host wrapper: launches both kernels with device sync
+__host__ void scmp_init_geometry(int* pointsflag, unsigned char* wall_mat) {
+    const int nTx = 32, nTy = 1;
+    dim3 threads(nTx, nTy, 1);
+    dim3 grid_geom((NX + nTx - 1) / nTx, (NY + nTy - 1) / nTy, 1);
+
+    scmp_mark_boundary_gpu<<<grid_geom, threads>>>(pointsflag, wall_mat);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    scmp_mark_ghost_gpu<<<grid_geom, threads>>>(pointsflag, wall_mat);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 /* ── SCMP initialization host wrapper ────────────────────────── */

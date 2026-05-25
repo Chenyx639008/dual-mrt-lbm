@@ -50,9 +50,12 @@ int main(int argc, char** argv){
 
     // ── Huang & Wu (2016) SCMP dispatch ──
     // mcmp_huang_256 always runs SCMP; mcmp_sim always runs legacy MCMP.
-#ifdef HUANG_256_BUILD
+#if defined(HUANG_256_BUILD) || defined(HUANG_POROUS_BUILD)
     {
         const char* params_path = (argc >= 2) ? argv[1] : "params.txt";
+#ifdef HUANG_POROUS_BUILD
+        push_wettability_and_maps(P);   // allocate d_wall_mat + upload θ tables
+#endif
         run_scmp_huang(P, params_path);
     }
     return 0;

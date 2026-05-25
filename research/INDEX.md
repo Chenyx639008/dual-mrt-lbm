@@ -1,7 +1,7 @@
 # Research 文档索引
 
 > 最后更新: 2026-05-24
-> 文件数: 19
+> 文件数: 20
 
 ---
 
@@ -10,6 +10,7 @@
 1. **[USAGE_GUIDE.md](USAGE_GUIDE.md)** — 端到端使用手册（编译、运行、配置）
 2. **[Research.md](Research.md)** — 多物理场 LBM 模型完整文档
 3. **[DEBUG_SUMMARY_20260524.md](DEBUG_SUMMARY_20260524.md)** — 最新验证 Bug 修复总结
+4. **[POROUS_DARCY_DEVLOG_20260524.md](POROUS_DARCY_DEVLOG_20260524.md)** — 🆕 多孔介质达西流开发日志
 
 ---
 
@@ -57,6 +58,8 @@
 
 | 文件 | 内容 |
 |------|------|
+| [POROUS_DARCY_DEVLOG_20260524.md](POROUS_DARCY_DEVLOG_20260524.md) | 🆕 **多孔介质达西流完整开发日志**（Bug 修复 + 代码结构 + 批量流程） |
+| [porous_media_scmp_refactor_plan.md](porous_media_scmp_refactor_plan.md) | 多孔介质 SCMP 重构方案 v2 |
 | [next_paper_plan.md](next_paper_plan.md) | 第二篇论文计划（甲烷水合物/CO₂ 置换） |
 | [single_phase_water_design.md](single_phase_water_design.md) | 单相水批量流设计（待实施） |
 
@@ -66,10 +69,10 @@
 
 | 状态 | 数量 | 说明 |
 |------|------|------|
-| ⭐ 活跃 | 15 | 当前使用中 |
+| ⭐ 活跃 | 16 | 当前使用中 |
 | 📦 已归档 | 4 | 移至 `_archive/` |
-| 📚 通用 | 2 | USAGE_GUIDE + Research |
-| 🔮 规划 | 2 | 待实施 |
+| 📚 通用 | 3 | USAGE_GUIDE + Research + POROUS_DARCY_DEVLOG |
+| 🔮 规划 | 3 | porous_media_scmp_refactor + next_paper + single_phase_water |
 
 > 无重复文件。所有文件服务于不同目的（验证 vs 水合物 vs 规划）。
 >

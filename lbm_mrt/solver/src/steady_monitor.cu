@@ -21,6 +21,25 @@
 // ========== GPU kernels ==========
 
 // 1) 体流量规约（与你现有保持一致）
+
+// ── SCMP single-phase flow rate reduction ─────────────────────
+__global__ void reduce_Q_scmp_kernel(
+    const double* __restrict__ ux,
+    const int*    __restrict__ flag,
+    double*       sumQ,
+    int nTot)
+{
+    unsigned int i   = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int sth = blockDim.x * gridDim.x;
+    double local = 0.0;
+    for (; i < nTot; i += sth) {
+        if (flag[i] > 0) {
+            local += ux[i];
+        }
+    }
+    atomicAdd(sumQ, local);
+}
+
 __global__ void reduce_flow_Q_dom_kernel(
     const double* __restrict__ ux_A,
     const double* __restrict__ rho_A,
@@ -245,6 +264,46 @@ bool SteadyMonitor::compare_and_update(double QA, double QB, double QT, int step
 
     // 如果你希望“一次命中就算稳”，把上面两行换成：
     // return passT;
+}
+
+// --- SCMP single-phase flow rate computation ---
+void SteadyMonitor::compute_Q_scmp(
+    const double* ux, const double* rho,
+    const int* pointsflag,
+    double& Q, int nTot) const
+{
+    checkCudaErrors(cudaMemset(d_sumA, 0, sizeof(double)));
+    const int BS = 256, GS = (nTot + BS - 1) / BS;
+    reduce_Q_scmp_kernel<<<GS, BS>>>(ux, pointsflag, d_sumA, nTot);
+    checkCudaErrors(cudaDeviceSynchronize());
+    double sum;
+    checkCudaErrors(cudaMemcpy(&sum, d_sumA, sizeof(double), cudaMemcpyDeviceToHost));
+    Q = sum / (double)NX;
+}
+
+bool SteadyMonitor::compare_and_update_single(double Q, int step) {
+    auto rel = [&](double cur, double ref){
+        if (fabs(ref) <= tol_abs && fabs(cur) <= tol_abs) return 0.0;
+        double denom = (fabs(ref) > tol_abs) ? fabs(ref) : 1.0;
+        return fabs(cur - ref) / denom;
+    };
+    if (!has_ref) {
+        QA_ref = Q; has_ref = true; consec_hit = 0;
+        printf("[steady-scmp] step=%d  INIT  Q=%.4e\n", step, Q);
+        return false;
+    }
+    double r = rel(Q, QA_ref);
+    printf("[steady-scmp] step=%d  Q=%.4e  dQ=%.3e  hits=%d/%d\n",
+           step, Q, r, consec_hit, need_consec);
+    QA_ref = Q;
+    if (r < tol_rel) {
+        consec_hit++;
+        if (consec_hit >= need_consec) {
+            printf("[steady-scmp] converged at step %d  Q=%.4e\n", step, Q);
+            return true;
+        }
+    } else { consec_hit = 0; }
+    return false;
 }
 
 // ========== device globals (definitions) ==========
