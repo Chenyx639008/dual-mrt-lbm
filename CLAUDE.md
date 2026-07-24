@@ -1,6 +1,7 @@
-# huang_mrt_2d — AI 入口
+# dual-mrt-lbm — AI 入口
 
-> **当前状态**: 双轨架构 (CUDA 生产 ↔ JAX 镜像) Phase 1-5 完成 · 生产就绪 (ε=1.7) · MCMP 已纳入 | 2026-07-22
+> **当前状态**: 双轨架构 (CUDA 生产 ↔ JAX 镜像) Phase 1-6 · 生产就绪 (ε=1.7) · MCMP 已纳入 | 2026-07-24
+> **GitHub**: https://github.com/Chenyx639008/dual-mrt-lbm
 > **一键入口**: `uv run lbm run scmp_cs_huang_256`
 > **框架手册**: [`research/FRAMEWORK_GUIDE.md`](research/FRAMEWORK_GUIDE.md) | **可行性评估**: [`research/unified_framework_feasibility.md`](research/unified_framework_feasibility.md) | **研究索引**: [`research/INDEX.md`](research/INDEX.md) | **CUDA 内核**: [`lbm_mrt/solver/CLAUDE.md`](lbm_mrt/solver/CLAUDE.md)
 
