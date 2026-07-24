@@ -1,96 +1,90 @@
-# Multicomponent-MRT-LBM
+# dual-mrt-lbm
 
-High-performance CUDA-based Multicomponent MRT-LBM solver template for multiphase flow and hydrate dissociation in porous media.
+双轨 MRT-LBM 框架：CUDA 生产轨 + JAX 镜像验证轨 + Python 统一调度。当前仓库主要面向 SCMP / MCMP 两相流、甲烷水合物分解，以及统一的模型注册、运行和验证流程。
 
-This is a Python application that uses [uv] for packaging and dependency management.
-It  provides [`pre-commit`][pre-commit] hooks for various linters
-and formatters and automated tests using [`pytest`][pytest] and [GitHub Actions].
-Pre-commit hooks are automatically kept updated with a dedicated GitHub Action, this can
-be removed and replaced with [pre-commit.ci] if using a public repo. The package version
-is dynamically generated from the most recent git tag using
-[`setuptools-scm`][setuptools-scm].
+## 当前状态
 
-It was developed by the [Imperial College Research Software Engineering Team].
+- 统一 CLI 已可用，入口为 `uv run lbm`。
+- 已注册模型可通过 `uv run lbm models` 查看，支持 `info`、`run`、`validate`、`build` 子命令。
+- CUDA 生产轨主要在 `lbm_mrt/solver/`，JAX 验证轨在 `jax_lbm/`。
+- 配置仍以 `params.txt` 为 Python 和 C++ 之间的唯一边界。
+- 现阶段推荐入口模型为 `scmp_cs_huang_256`。
 
-## Usage
+## 快速开始
 
-To get started:
+```bash
+uv sync --all-groups
+uv run lbm models
+uv run lbm info scmp_cs_huang_256
+uv run lbm validate scmp_cs_huang_256
+uv run lbm run scmp_cs_huang_256 --geom data/geometry/droplet.plt
+uv run lbm build --huang-unified
+uv run pytest && uv run ruff check . && uv run ruff format .
+```
 
-1. [Download and install uv] following the instructions for your OS.
-1. Activate a git repository (required for `pre-commit` and the package versioning with
-`setuptools-scm`):
+## 统一 CLI
 
-    ```bash
-    git init
-    ```
+```bash
+uv run lbm models
+uv run lbm info <model_name>
+uv run lbm run <model_name> [--geom PATH] [--steps N] [--case-name NAME] [--output DIR] [KEY=VALUE ...]
+uv run lbm validate <model_name>
+uv run lbm build --huang-unified
+```
 
-1. Install the package and dependencies and set up the virtual environment:
+常见模型示例：
 
-    ```bash
-    uv sync --all-groups
-    ```
+- `scmp_cs_huang_256`
+- `scmp_cs_huang_256_highT`
+- `scmp_cs_huang_256_lowT`
+- `scmp_cs_huang_256_theta120`
+- `scmp_cs_huang_256_theta60`
+- `mcmp_pr_baseline`
+- `mcmp_pr_wet`
 
-1. Activate the virtual environment, or just preface your commands with `uv run` to use
-the virtual environment (see [uv activate] for more info):
+## 目录导航
 
-    ```bash
-    source .venv/bin/activate
-    <command>
-    ```
+| 目录 | 说明 |
+|------|------|
+| `lbm_mrt/solver/` | CUDA C++17 核心（内核、EOS、边界、水合物） |
+| `lbm_mrt/unified/` | 统一框架（模型注册、CLI、runner） |
+| `jax_lbm/` | 独立的 D2Q9 BGK / Shan-Chen 验证实现 |
+| `configs/` | YAML 配置（MCMP 默认、水合物叠加、SCMP） |
+| `scripts/` | 工作流脚本与批量脚本 |
+| `research/` | 研究说明、框架文档、验证策略 |
+| `validation/` | 接触角、网格收敛、表面等验证案例 |
+| `data/` | 几何、设计表、benchmark 数据 |
+| `results/` | 模拟输出（通常不纳入版本控制） |
 
-    or
+## 关键约定
 
-    ```bash
-    uv run <command>
-    ```
+- 配置流为 `YAML -> load_config() -> flat dict -> params.txt -> load_params_txt() -> __constant__` 设备内存。
+- `params.txt` 是 Python 到 C++ 的唯一边界，字段名必须和 `RuntimeParams` 完全匹配。
+- 旧版 Huang SCMP 二进制的 `NX/NY` 仍是编译期常量；统一构建支持运行时网格覆盖。
+- 输出 VTK 为 big-endian legacy binary，读取时应使用仓库内的专用读取器。
+- `HYDRATE_ENABLE` 相关逻辑只在水合物构建时启用。
 
-1. Install the pre-commit git hooks:
+## 常见注意事项
 
-    ```bash
-    uv run pre-commit install
-    ```
+1. Huang SCMP 默认建议使用 `epsilon_huang = 1.7`，不是论文里的理论默认值。
+2. 修改网格后需要重新构建对应二进制。
+3. `params.txt` 里的 key 如果拼错，不会自动报错，只会被静默忽略。
+4. 水合物参数对非水合物二进制不会生效。
+5. 生成的 VTK 不能直接按文本文件解析。
 
-1. Update the pre-commit hooks
+## 文档索引
 
-    ```bash
-    uv run pre-commit autoupdate
-    ```
+- [框架手册](research/FRAMEWORK_GUIDE.md)
+- [研究索引](research/INDEX.md)
+- [统一框架可行性评估](research/unified_framework_feasibility.md)
+- [CUDA 内核说明](lbm_mrt/solver/CLAUDE.md)
+- [配置索引](configs/INDEX.md)
 
-1. Run the main app:
+## 开发命令
 
-    ```bash
-    uv run python -m lbm_mrt
-    ```
-
-1. Run the tests:
-
-    ```bash
-    uv run pytest
-    ```
-
-1. Create an initial commit (it's possible there might be some failures in pre-commit):
-
-    ```bash
-    git add .
-    git commit -m "Initial commit"
-    ```
-
-## Updating Dependencies
-
-Use the commands `uv add <package>` and `uv remove <package>` to add or remove dependencies.
-
-- Use the optional flag `--dev` to add/remove development dependencies.
-- Include the optional flag `--group <group-name>` to add/remove dependencies from specific groups.
-- These will automatically update the `pyproject.toml` file.
-
-For further information, see the [uv] docs for managing dependencies.
-
-[uv]: https://docs.astral.sh/uv
-[pre-commit]: https://pre-commit.com/
-[pytest]: https://pytest.org/
-[GitHub Actions]: https://github.com/features/actions
-[pre-commit.ci]: https://pre-commit.ci
-[setuptools-scm]: https://setuptools-scm.readthedocs.io/en/latest/
-[Imperial College Research Software Engineering Team]: https://www.imperial.ac.uk/admin-services/ict/self-service/research-support/rcs/service-offering/research-software-engineering/
-[Download and install uv]: https://docs.astral.sh/uv/getting-started/installation/
-[uv activate]: https://docs.astral.sh/uv/pip/environments/
+```bash
+uv sync --all-groups
+uv run pytest
+uv run ruff check .
+uv run ruff format .
+```
