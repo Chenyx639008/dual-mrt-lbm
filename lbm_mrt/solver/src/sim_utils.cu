@@ -355,6 +355,8 @@ RuntimeParams load_params_txt(const string& path, const RuntimeParams& d){
     get("huang_u_max", r.huang_u_max); get("huang_psi_cut", r.huang_psi_cut);
     get("huang_tanh_factor", r.huang_tanh_factor); get("huang_rho_max_init", r.huang_rho_max_init);
     geti("huang_init_mode", r.huang_init_mode);
+    geti("nx_override", r.nx_override);   // 🔧 Phase 2: runtime grid
+    geti("ny_override", r.ny_override);   // 🔧 Phase 2: runtime grid
 
     geti("CP_EVERY", r.CP_EVERY);
     geti("CP_KEEP",  r.CP_KEEP);
@@ -690,6 +692,21 @@ void push_device_constants(const RuntimeParams& p){
     }
     CK(cudaMemcpyToSymbol(A_a_gpu, A_a_host, sizeof(A_a_host)));
     CK(cudaMemcpyToSymbol(A_b_gpu, A_b_host, sizeof(A_b_host)));
+
+    // 🔧 Phase 2: Upload runtime grid for unified builds
+#ifdef HUANG_UNIFIED_BUILD
+    {
+        int active_nx = (p.nx_override > 0) ? p.nx_override : (int)NX;
+        int active_ny = (p.ny_override > 0) ? p.ny_override : (int)NY;
+        // Clamp to compile-time max
+        if (active_nx > (int)NX) active_nx = (int)NX;
+        if (active_ny > (int)NY) active_ny = (int)NY;
+        CK(cudaMemcpyToSymbol(d_nx_active, &active_nx, sizeof(int)));
+        CK(cudaMemcpyToSymbol(d_ny_active, &active_ny, sizeof(int)));
+        printf("[Phase2] Runtime grid: %d × %d (max %d × %d)\n",
+               active_nx, active_ny, (int)NX, (int)NY);
+    }
+#endif
 }
 
 
@@ -1166,9 +1183,12 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
         }
     }
 
+    // ── Determine max steps: use params.txt flow_max_steps if >0, else compile-time NSTEPS ──
+    int scmp_max_steps = (P.flow_max_steps > 0) ? P.flow_max_steps : static_cast<int>(NSTEPS);
+
     printf("[scmp] output dir: %s\n", out_dir.c_str());
     printf("[scmp] Starting SCMP time loop: %d steps, output every %d\n",
-           static_cast<int>(NSTEPS), P.OUTPUT_EVERY);
+           scmp_max_steps, P.OUTPUT_EVERY);
 
     unsigned char* wall_mat_dev = nullptr;
     cudaMemcpyFromSymbol(&wall_mat_dev, d_wall_mat, sizeof(wall_mat_dev));
@@ -1176,7 +1196,7 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
     auto t_start = std::chrono::high_resolution_clock::now();
 
     // ── Time loop ──
-    for (int step = 0; step < static_cast<int>(NSTEPS); ++step) {
+    for (int step = 0; step < scmp_max_steps; ++step) {
         evolution_scmp(
             F.rho, F.ux, F.uy, F.psi, F.pressure,
             F.Fx_mol, F.Fy_mol,
@@ -1217,7 +1237,7 @@ void run_scmp_huang(const RuntimeParams& P, const char* params_path)
     cudaMemcpy(h_psi.data(),    F.psi,      N*sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_flag.data(),     pointsflag_dev, N*sizeof(int), cudaMemcpyDeviceToHost);
 
-    int final_step = static_cast<int>(NSTEPS);
+    int final_step = scmp_max_steps;
     outputvtk_scmp(final_step, out_dir, "flow", "scmp_final", h_rho, h_ux, h_uy, h_pressure, h_p_xx, h_p_yy, h_Fx, h_Fy, h_psi, h_flag);
 
     auto t_end = std::chrono::high_resolution_clock::now();

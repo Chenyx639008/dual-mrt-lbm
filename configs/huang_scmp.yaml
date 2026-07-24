@@ -13,8 +13,8 @@ project:
 # ── Physics mode ──
 huang_scmp:
   pp_mode: 1            # SCMP (required for mcmp_huang_256)
-  epsilon_huang: -0.666667 # ε = −8·k₁,  k₁=1/12 = half-max tension
-  k2_huang: 0.0         # secondary σ parameter (paper Eq.59: enters Q_m1 via k1+2k2)
+  epsilon_huang: 1.7       # ε empirically tuned (NOT paper's −2/3). k₁=−ε/8=−0.2125
+  k2_huang: 0.0         # secondary σ parameter
   kd_huang: -0.083333   # fixed constant kd=-1/12 (paper Section 6.3, enters pressure tensor)
   alpha_meq: 1.0        # Eq.5 α parameter (paper: α=1); controls meq[1] = (-2+3α|u|²)ρ
   cs_a: 1.0             # Carnahan-Starling a (paper default)

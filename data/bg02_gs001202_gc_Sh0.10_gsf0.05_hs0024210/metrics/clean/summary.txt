@@ -1,0 +1,12 @@
+D_box = 2.024895
+beta = 4.991435
+patchiness = nan
+skew = 1.098792
+kurtosis = 0.757641
+hurs = 0.770617
+tortuosity = 0.005222
+phi (total void fraction) = 0.554000
+phi_eff (effective/percolating porosity) = 0.553922
+phi_eff/phi (connectivity efficiency) = 0.999860
+euler_number(effective pore) = nan
+HPID = nan

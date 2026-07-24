@@ -19,6 +19,7 @@ dependencies = [
 lbm-build = "lbm_mrt.solver.build:main"
 lbm-run   = "lbm_mrt.runners.single_run:main"
 lbm-batch = "lbm_mrt.runners.batch_run:main"
+lbm       = "lbm_mrt.unified.cli:main"
 
 [dependency-groups]
 dev = [
@@ -80,11 +81,12 @@ pydocstyle.convention = "google"
 requires = ["setuptools>=78", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools_scm]
+fallback_version = "3.2.0"
+
 [tool.setuptools.packages.find]
 where   = ["."]
 include = ["lbm_mrt*"]
 
 [tool.setuptools.package-data]
 "lbm_mrt.solver" = ["src/*.cu", "include/*.h", "include/*.cuh"]
-
-[tool.setuptools_scm]

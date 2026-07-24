@@ -54,6 +54,20 @@ constexpr unsigned int NY      = 212* SCALE;
 constexpr unsigned int NSTEPS  = 5000000;
 constexpr unsigned int NOUTPUT = 50000;
 #endif
+
+/* ── 🔧 Phase 2: Runtime grid for Unified Huang binary ── */
+#ifdef HUANG_UNIFIED_BUILD
+// Forward-declare __constant__ variables (defined in LBM_DEFINE_GLOBALS block).
+extern __constant__ int d_nx_active, d_ny_active;
+
+// NX/NY are compile-time MAX (1024).  Actual active grid set at runtime.
+__device__ __forceinline__ int get_nx_active() { return d_nx_active; }
+__device__ __forceinline__ int get_ny_active() { return d_ny_active; }
+#else
+// Non-unified builds: grid is compile-time only (zero overhead).
+__device__ __forceinline__ int get_nx_active() { return (int)NX; }
+__device__ __forceinline__ int get_ny_active() { return (int)NY; }
+#endif
 /* ------------ ② D2Q9 几何与权重 ----------------------- */
 constexpr int Q = 9;
 inline constexpr int   e[Q][2] = {{0,0},{1,0},{0,1},{-1,0},{0,-1},{1,1},{-1,1},{-1,-1},{1,-1}};
@@ -98,6 +112,27 @@ namespace phys
     /* Interaction strength (kept for legacy __constant__ upload) */
     inline constexpr double GAA = -1.0;
     inline constexpr double GBB = 0.0;
+}
+
+namespace eos
+{
+    /* Peng-Robinson EOS parameters for MCMP component A (water-like) */
+    inline constexpr double PR_scalar = 1.0;        // EOS scaling factor
+    inline constexpr double reducedT_w_ini = 0.85;  // initial reduced temperature T/Tc
+
+    inline constexpr double a_w     = 1.0 / 49.0;  // attractive parameter
+    inline constexpr double b_w     = 2.0 / 21.0;  // co-volume
+    inline constexpr double R_w     = 1.0;          // gas constant
+    inline constexpr double omega_w = 0.344;        // acentric factor
+    inline constexpr double Tc_w    = 0.036461002037067;  // critical temperature
+    inline constexpr double T_eos   = Tc_w * reducedT_w_ini;  // physical temperature
+
+    /* PR-EOS parameters for MCMP component B (methane-like) */
+    inline constexpr double a_m     = 1.0 / 49.0;
+    inline constexpr double b_m     = 2.0 / 21.0;
+    inline constexpr double R_m     = 1.0;
+    inline constexpr double omega_m = 0.011;
+    inline constexpr double Tc_m    = 0.036461002037067;
 }
 
 
@@ -151,6 +186,11 @@ __constant__ double d_huang_psi_l_ref, d_huang_psi_g_ref;
 __constant__ double d_huang_u_max, d_huang_psi_cut;
 __constant__ double d_huang_tanh_factor, d_huang_rho_max_init;
 
+// ── 🔧 Phase 2: Runtime grid (HUANG_UNIFIED_BUILD only) ──
+#ifdef HUANG_UNIFIED_BUILD
+__constant__ int d_nx_active, d_ny_active;
+#endif
+
 #else  // ── extern declarations for non-defining translation units ──
 
 // Group A: Wettability & wall maps
@@ -182,6 +222,11 @@ extern __device__ __constant__ double d_kappa;
 extern __device__ __constant__ double d_GAB;
 extern __device__ __constant__ double d_GBA;
 extern __device__ __constant__ double d_sigmaA;
+
+// 🔧 Phase 2: Runtime grid (HUANG_UNIFIED_BUILD only)
+#ifdef HUANG_UNIFIED_BUILD
+extern __device__ __constant__ int d_nx_active, d_ny_active;
+#endif
 
 // Group E: Huang & Wu (2016) SCMP
 extern __device__ __constant__ int    d_pp_mode;

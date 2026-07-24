@@ -81,6 +81,12 @@ struct RuntimeParams {
   // and for a potential unified binary in the future.
   int    pp_mode      = 0;       // 0=legacy MCMP, 1=Huang SCMP
 
+  // 🔧 Phase 2: Runtime grid override (HUANG_UNIFIED_BUILD only).
+  // Set to 0 to use compile-time NX/NY.  Otherwise, overrides active grid size
+  // at runtime via d_nx_active / d_ny_active.
+  int    nx_override  = 0;       // 0 = use NX_MAX; >0 = active grid width
+  int    ny_override  = 0;       // 0 = use NY_MAX; >0 = active grid height
+
   // — Carnahan-Starling EOS parameters —
   double cs_a         = 1.0;     // attraction parameter a
   double cs_b         = 4.0;     // co-volume parameter b

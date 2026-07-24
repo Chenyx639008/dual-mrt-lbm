@@ -125,6 +125,12 @@ __global__ void dbg_consts_once(){
         sink += get_huang_psi_l_ref() + get_huang_psi_g_ref();
         sink += get_huang_u_max() + get_huang_psi_cut();
         sink += get_huang_tanh_factor() + get_huang_rho_max_init();
+#ifdef HUANG_UNIFIED_BUILD
+        sink += (double)d_nx_active + (double)d_ny_active;
+#endif
+        // PR-EOS constants (prevent device linker stripping)
+        sink += a_w_gpu + b_w_gpu + R_w_gpu + omega_w_gpu + Tc_w_gpu + T_gpu;
+        sink += a_m_gpu + b_m_gpu + R_m_gpu + omega_m_gpu + Tc_m_gpu;
 
         // 防止被优化掉
         if (sink < -1e300) printf("sink=%g\n", (double)sink);
@@ -552,7 +558,7 @@ __global__ void mark_fluid_solid(int* pointsflag)
 {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
-    if (x>=NX || y>=NY) return;
+    if (x>=get_nx_active() || y>=get_ny_active()) return;
     int idx = findindex_scalar_gpu(x,y);
 
     //extern __device__ unsigned char* d_wall_mat;
@@ -607,7 +613,7 @@ __global__ void init_wall_mat_from_flag(int* pointsflag)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     int idx = findindex_scalar_gpu(x, y);
     int f = pointsflag[idx];
@@ -632,7 +638,7 @@ __global__ void mark_boundary(int* pointsflag)
 {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
-    if (x>=NX || y>=NY) return;
+    if (x>=get_nx_active() || y>=get_ny_active()) return;
     int idx = findindex_scalar_gpu(x,y);
     // 只有流体格才做边界判断
     if (pointsflag[idx] != 1) return;
@@ -662,7 +668,7 @@ __global__ void mark_ghost(int* pointsflag)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] != 0) return;
 
@@ -697,6 +703,7 @@ __host__ void init_all(int* pointsflag, double* rho_A, double* fin_A, double* fo
 //cudaMemcpyToSymbol 是专门用于将值写入 __constant__ 内存的
 __host__ void init_device_variable() {
     using namespace phys;
+    using namespace eos;
 
 	// D2Q9 方向与权重
 	CK(cudaMemcpyToSymbol(e_gpu, &e, sizeof(int) * Q * 2));
@@ -722,8 +729,32 @@ __host__ void init_device_variable() {
 	CK(cudaMemcpyToSymbol(c_gpu, &c, sizeof(double)));
 	CK(cudaMemcpyToSymbol(cs2_gpu, &cs2, sizeof(double)));
 
-	// PR-EOS 常数 — 已迁移到 RuntimeParams，不在此上传
-	// Li MRT 初始化参数 — 已移除，改用 configs/huang_scmp.yaml
+	// PR-EOS 常数 — 上传到 __constant__ 供 MCMP A+B 相使用
+	CK(cudaMemcpyToSymbol(reducedT_w_ini_gpu, &reducedT_w_ini, sizeof(double)));
+	CK(cudaMemcpyToSymbol(a_w_gpu,     &a_w,     sizeof(double)));
+	CK(cudaMemcpyToSymbol(b_w_gpu,     &b_w,     sizeof(double)));
+	CK(cudaMemcpyToSymbol(R_w_gpu,     &R_w,     sizeof(double)));
+	CK(cudaMemcpyToSymbol(omega_w_gpu, &omega_w, sizeof(double)));
+	CK(cudaMemcpyToSymbol(Tc_w_gpu,    &Tc_w,    sizeof(double)));
+	CK(cudaMemcpyToSymbol(T_gpu,       &T_eos,   sizeof(double)));
+
+	CK(cudaMemcpyToSymbol(a_m_gpu,     &a_m,     sizeof(double)));
+	CK(cudaMemcpyToSymbol(b_m_gpu,     &b_m,     sizeof(double)));
+	CK(cudaMemcpyToSymbol(R_m_gpu,     &R_m,     sizeof(double)));
+	CK(cudaMemcpyToSymbol(omega_m_gpu, &omega_m, sizeof(double)));
+	CK(cudaMemcpyToSymbol(Tc_m_gpu,    &Tc_m,    sizeof(double)));
+
+	CK(cudaMemcpyToSymbol(PR_scalar_gpu, &PR_scalar, sizeof(double)));
+
+	// 🔧 MCMP ghost-layer wettability — restored from original contact_eq1
+	{
+		int    contact_dir = 0;       // 0=hydrophilic ghost fill
+		double phi_pho_A   = 1.0;     // ghost ρ multiplier (1.0 = copy neighbour avg)
+		double delta_pho_A = 0.0;     // ghost ρ offset (0 = no offset)
+		CK(cudaMemcpyToSymbol(contact_angle_dir_gpu, &contact_dir, sizeof(int)));
+		CK(cudaMemcpyToSymbol(phi_contact_pho_A_gpu, &phi_pho_A, sizeof(double)));
+		CK(cudaMemcpyToSymbol(delta_pho_A_gpu, &delta_pho_A, sizeof(double)));
+	}
 }
 //推进一步 LBM 的演化过程（相当于 time step 的执行器）
 // 所有步骤在 GPU 上并行进行，整合在 evolution(...) 中，便于在 main() 中统一调用。
@@ -823,7 +854,7 @@ __global__ void init_gpu_1(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     const int idx = findindex_scalar_gpu(x, y);
     double u0[2] = {0.0, 0.0};
@@ -911,7 +942,7 @@ __global__ void init_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x; // 每个线程负责 (x,y)
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     const int idx = findindex_scalar_gpu(x, y);
     double u0[2] = {0.0, 0.0};
@@ -994,7 +1025,7 @@ __global__ void compute_rho_fluid_A(
     /* —— 全局坐标 —— */
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     int idx = findindex_scalar_gpu(x, y);
     int tid = threadIdx.y * blockDim.x + threadIdx.x;  // 1-D 线程索引
@@ -1036,7 +1067,7 @@ __global__ void fill_ghost_rho_A(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] != -1) return;       // 只处理虚拟层
@@ -1072,7 +1103,7 @@ __global__ void compute_p_psi_A_all(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     // —— 1) ghost layer —— 用密度直接做 psi，跳过下面的 EOS
     if (pointsflag[idx] == -2 || pointsflag[idx] == -3) return;
@@ -1148,7 +1179,7 @@ __global__ void compute_rho_fluid_B(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y;    // blockDim.y = 1
-    if (x>=NX || y>=NY) return;
+    if (x>=get_nx_active() || y>=get_ny_active()) return;
 
     int idx = findindex_scalar_gpu(x,y);
     if (pointsflag[idx] >= 0){          // 0 / 1
@@ -1165,7 +1196,7 @@ __global__ void fill_ghost_rho_B_avg(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y;
-    if (x>=NX || y>=NY) return;
+    if (x>=get_nx_active() || y>=get_ny_active()) return;
 
     int idx = findindex_scalar_gpu(x,y);
     if (pointsflag[idx] != -1) return;
@@ -1192,7 +1223,7 @@ __global__ void compute_p_psi_B_all(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y;
-    if (x>=NX || y>=NY) return;
+    if (x>=get_nx_active() || y>=get_ny_active()) return;
 
     int idx = findindex_scalar_gpu(x,y);
     if (pointsflag[idx] == -2 || pointsflag[idx] == -3) return;
@@ -1238,7 +1269,7 @@ __global__ void compute_total_density_gpu(
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	if (x >= NX || y >= NY) return;
+	if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int index = findindex_scalar_gpu(x, y);
 	if (pointsflag[index] >= 0) {
 		rho_host[index] = rho_A[index] + rho_B[index];
@@ -1251,7 +1282,7 @@ __global__ void compute_total_pressure_gpu(
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	if (x >= NX || y >= NY) return;
+	if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int index = findindex_scalar_gpu(x, y);
 	if (pointsflag[index] >= 0) {
 		double rho_sum = rho_A[index] + rho_B[index];
@@ -1282,7 +1313,7 @@ __global__ void compute_molecular_force_gpu(
 {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
-    if (x>=NX||y>=NY) return;
+    if (x>=get_nx_active()||y>=get_ny_active()) return;
     int idx = findindex_scalar_gpu(x,y);
     if (pointsflag[idx]<0) return;
 
@@ -1332,7 +1363,7 @@ __global__ void compute_adsorption_force_gpu(
 {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
-    if (x>=NX||y>=NY) return;
+    if (x>=get_nx_active()||y>=get_ny_active()) return;
     int idx = findindex_scalar_gpu(x,y);
     if (pointsflag[idx]<0) return;
 
@@ -1353,10 +1384,9 @@ __global__ void compute_adsorption_force_gpu(
             wAx += ex * psiA * GAw_loc;  wAy += ey * psiA * GAw_loc;
             wBx += ex * psiB * GBw_loc;  wBy += ey * psiB * GBw_loc; // ← 用 GBw_loc
         }
-
     }
-    Fx_ads_A[idx] = -wAx;  Fy_ads_A[idx] = -wAy;
-    Fx_ads_B[idx] = -wBx;  Fy_ads_B[idx] = -wBy;
+    Fx_ads_A[idx] = -psiA * wAx;  Fy_ads_A[idx] = -psiA * wAy;
+    Fx_ads_B[idx] = -psiB * wBx;  Fy_ads_B[idx] = -psiB * wBy;
 }
 
 
@@ -1368,7 +1398,7 @@ __global__ void compute_velocity_gpu_AB(
     const double* Fx_ads_B, const double* Fy_ads_B, double* ux_B, double* uy_B, int* pointsflag ) {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	if (x >= NX || y >= NY) return;
+	if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int idx = findindex_scalar_gpu(x, y);
 	if (pointsflag[idx] >= 0) {
 		// --- A 组分 ---
@@ -1425,7 +1455,7 @@ __global__ void compute_velocity_gpu_mix(
 ) {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	if (x >= NX || y >= NY) return;
+	if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int idx = findindex_scalar_gpu(x, y);
 	if (pointsflag[idx] >= 0) {
 		double rA = rho_A[idx], rB = rho_B[idx];
@@ -1443,7 +1473,7 @@ __global__ void compute_C_gpu_A(const double* psi_A, double* C_A,  int* pointsfl
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	if (x >= NX || y >= NY) return;
+	if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int idx = findindex_scalar_gpu(x, y);
 	if (pointsflag[idx] >= 0) {
 
@@ -1487,7 +1517,7 @@ __global__ void compute_S_gpu_A(const double* ux_host, const double* uy_host,
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	if (x >= NX || y >= NY) return;
+	if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int idx = findindex_scalar_gpu(x, y);
 	if (pointsflag[idx] >= 0) {
         double gx = get_Gx(), gy = get_Gy();
@@ -1519,7 +1549,7 @@ __global__ void compute_S_gpu_B(const double* ux_host, const double* uy_host,
 {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	if (x >= NX || y >= NY) return;
+	if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int idx = findindex_scalar_gpu(x, y);
 	if (pointsflag[idx] >= 0) {
         double rhoB_safe = rho_B[idx];
@@ -1622,7 +1652,7 @@ __global__ void mrt_collide_two_components_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     /* ------------ A 相 ------------ */
     {
@@ -1713,7 +1743,7 @@ __global__ void stream_two_components_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 	int idx = findindex_scalar_gpu(x,y);
 	if (pointsflag[idx] == 1) {
 		#pragma unroll
@@ -1734,7 +1764,7 @@ __global__ void sanitize_ghost_and_solid(
 {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
-    if (x>=NX || y>=NY) return;
+    if (x>=get_nx_active() || y>=get_ny_active()) return;
     int idx = NX*y + x;
     if (pointsflag[idx] < 0){               // -1, -2
         ux_A[idx]=uy_A[idx]=0.0;  ux_B[idx]=uy_B[idx]=0.0;
@@ -1800,7 +1830,7 @@ __global__ void boundary_gpu_1(double*  __restrict__ fin_A,
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     const int idx = findindex_scalar_gpu(x,y);
     if (pointsflag[idx] != 0) return; // 只处理边界节点
@@ -1881,7 +1911,7 @@ __global__ void boundary_gpu(double*  fin_A,
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);          // scalar-field 索引
 
     if (pointsflag[idx] == 0)                    // 只处理 flag == 0
@@ -2073,7 +2103,7 @@ __global__ void compute_rho_from_fin_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     // Compute density for all nodes (fluid, boundary, ghost)
     // Ghost nodes need ρ for ψ BC mirror
@@ -2094,7 +2124,7 @@ __global__ void compute_p_psi_scmp_cs(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] < 0) return;
 
@@ -2141,7 +2171,7 @@ __global__ void compute_molecular_force_scmp(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] < 0) { Fx[idx]=0.0; Fy[idx]=0.0; return; }
 
@@ -2179,7 +2209,7 @@ __global__ void compute_adsorption_force_scmp(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     // Only compute on fluid nodes (pointsflag==1) near walls
     if (pointsflag[idx] != 1) { Fx_ads[idx] = 0.0; Fy_ads[idx] = 0.0; return; }
@@ -2213,7 +2243,7 @@ __global__ void update_ghost_psi_bc(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
 
     // Only operate on ghost nodes at walls
@@ -2281,7 +2311,7 @@ __global__ void add_adsorption_to_force(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] == 1) {
         Fx[idx] += Fx_ads[idx];
@@ -2298,7 +2328,7 @@ __global__ void compute_velocity_scmp(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] < 0) return;
 
@@ -2332,7 +2362,7 @@ __global__ void compute_S_huang_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] < 0) return;
 
@@ -2361,7 +2391,7 @@ __global__ void compute_Q_huang_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] < 0) return;
 
@@ -2407,7 +2437,7 @@ __global__ void compute_pressure_tensor_scmp(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] < 0) {
         p_xx[idx] = 0.0; p_yy[idx] = 0.0; p_xy[idx] = 0.0;
@@ -2469,7 +2499,7 @@ __global__ void mrt_collide_single_component_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] < 0) return;
 
@@ -2527,7 +2557,7 @@ __global__ void stream_single_component_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     if (pointsflag[idx] == 1) {
         #pragma unroll
@@ -2545,7 +2575,7 @@ __global__ void boundary_scmp_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     // Handle both: boundary nodes (0) AND fluid nodes (1) adjacent to ghost (-1)
     bool is_boundary = (pointsflag[idx] == 0);
@@ -2579,7 +2609,7 @@ __global__ void zouhe_bottom_wall_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
 
     // Only active for mode 4 (contact angle) — bottom wall with droplet
     if (get_huang_init_mode() != 4) return;
@@ -2634,7 +2664,7 @@ __global__ void init_all_scmp_gpu(
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
 
     // SCMP: default periodic-fluid; mode 3 enables channel walls for Poiseuille
@@ -2753,7 +2783,7 @@ __global__ void init_all_scmp_gpu(
     }
 }
 
-/* ── SCMP one-step evolution driver ──────────────────────────── */
+/* ── 🔧 Phase 2: SCMP one-step evolution driver (runtime-grid ready) ── */
 __host__ void evolution_scmp(
     double* rho,   double* ux,   double* uy,
     double* psi,   double* pressure,
@@ -2830,7 +2860,7 @@ __host__ void evolution_scmp(
 __global__ void scmp_mark_boundary_gpu(int* pointsflag, unsigned char* wall_mat) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
     int f = pointsflag[idx];
 
@@ -2863,7 +2893,7 @@ __global__ void scmp_mark_boundary_gpu(int* pointsflag, unsigned char* wall_mat)
 __global__ void scmp_mark_ghost_gpu(int* pointsflag, unsigned char* wall_mat) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= NX || y >= NY) return;
+    if (x >= get_nx_active() || y >= get_ny_active()) return;
     int idx = findindex_scalar_gpu(x, y);
 
     // Only process solid interior nodes

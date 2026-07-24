@@ -140,3 +140,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Large benchmark data (425MB)
+data/file/
+
+# Compiled Huang SCMP binaries
+lbm_mrt/solver/mcmp_huang_*
+lbm_mrt/solver/mcmp_huang_unified

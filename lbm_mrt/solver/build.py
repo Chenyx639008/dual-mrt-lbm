@@ -40,6 +40,7 @@ def build(
     hydrate: bool = False,
     huang: bool = False,
     porous: bool = False,
+    huang_unified: bool = False,
     plt_path: str | None = None,
     grid: tuple[int, int] | None = None,
     steps: int | None = None,
@@ -96,6 +97,10 @@ def build(
             binary_name += f"_s{steps}"
     elif hydrate:
         binary_name = "mcmp_sim_hydrate"
+    elif huang_unified:
+        # Unified Huang binary: compiled with NX_MAX=1024, NY_MAX=1024
+        # Actual grid size set at runtime via d_nx_active / d_ny_active
+        binary_name = "mcmp_huang_unified"
     else:
         binary_name = "mcmp_sim"
     output_path = os.path.join(out_dir, binary_name)
@@ -129,6 +134,16 @@ def build(
             nx, ny = grid
             cmd.append(f"-DHUANG_NX={nx}")
             cmd.append(f"-DHUANG_NY={ny}")
+        if steps is not None:
+            cmd.append(f"-DHUANG_NSTEPS={steps}")
+        if output_every is not None:
+            cmd.append(f"-DHUANG_NOUTPUT={output_every}")
+    if huang_unified:
+        # Unified build: grid is runtime, compile for max dimensions
+        cmd.append("-DHUANG_256_BUILD")
+        cmd.append("-DHUANG_UNIFIED_BUILD")
+        cmd.append("-DHUANG_NX=1024")
+        cmd.append("-DHUANG_NY=1024")
         if steps is not None:
             cmd.append(f"-DHUANG_NSTEPS={steps}")
         if output_every is not None:
@@ -206,6 +221,11 @@ def main() -> None:
         help="Optional Huang output interval override.",
     )
     p.add_argument(
+        "--huang-unified",
+        action="store_true",
+        help="Build unified Huang SCMP binary (runtime grid via d_nx_active, max 1024×1024).",
+    )
+    p.add_argument(
         "--arch",
         default="sm_120",
         metavar="SM",
@@ -253,6 +273,7 @@ def main() -> None:
             debug=args.debug,
             output_dir=args.output_dir,
             dry_run=args.dry_run,
+            huang_unified=args.huang_unified,
         )
     )
 
