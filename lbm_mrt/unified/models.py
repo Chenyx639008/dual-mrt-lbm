@@ -148,6 +148,7 @@ class ModelDefinition:
     initial: dict[str, Any] = field(default_factory=dict)
     numerical: dict[str, Any] = field(default_factory=dict)
     notes: str = ""
+    status: str = "stable"  # "stable" | "experimental" | "pending_verification"
 
     def __post_init__(self):
         """Validate model consistency."""
@@ -161,6 +162,10 @@ class ModelDefinition:
             raise ValueError("SCMP models require n_components=1")
         if self.model_family == "mcmp" and self.n_components != 2:
             raise ValueError("MCMP models require n_components=2")
+        if self.n_dimensions not in (2, 3):
+            raise ValueError(f"n_dimensions must be 2 or 3, got {self.n_dimensions}")
+        if self.status not in ("stable", "experimental", "pending_verification"):
+            raise ValueError(f"Unknown status '{self.status}'")
 
     def to_params_dict(self) -> dict[str, Any]:
         """Merge all component params into the flat params.txt dict.
@@ -475,6 +480,128 @@ MCMP_MODELS: dict[str, ModelDefinition] = {
         },
         notes="Higher Sw, moderate body force for drainage.",
     ),
+    # ── Hydrate models (MCMP + thermal + concentration + VOP) ──
+    "mcmp_hydrate_sphere": ModelDefinition(
+        name="mcmp_hydrate_sphere",
+        description=(
+            "MCMP hydrate sphere: 300×300, PR-EOS, bottom-wall heating "
+            "(T_inlet=323.15K), single hydrate sphere decomposition."
+        ),
+        model_family="mcmp",
+        n_components=2,
+        eos=EOSParams.peng_robinson(a=2 / 49, b=2 / 21, R=1.0, T_reduced=0.80),
+        collision=CollisionParams.mcmp_mrt(
+            tau_p_a=0.593418,
+            tau_p_b=0.515411,
+            kappa=0.7698,
+        ),
+        force=ForceParams.shan_chen(GAB=0.24, GBA=0.24, sigmaA=0.11),
+        wetting=WettingParams.material_mapped(
+            theta_by_material={1: 30.0, 2: 80.0},
+        ),
+        cuda_binary="mcmp_sim_hydrate",
+        grid=(300, 300),
+        status="pending_verification",
+        initial={
+            "Sw": 0.30,
+            "init_eq": 1,
+            "hydrate_enable": True,
+            "hydrate_start_step": 0,
+            "T0_init": 278.15,
+            "T0_inlet": 323.15,
+            "thermal_bc_side": 0,
+            "lambda_fluid": 0.6,
+            "lambda_hydrate": 0.49,
+            "lambda_solid": 0.9,
+            "rhocp_fluid": 4200000.0,
+            "rhocp_hydrate": 2100000.0,
+            "rhocp_solid": 2000000.0,
+            "D_mol_water": 1.85e-9,
+            "Henry_KH": 0.1,
+            "Cm_init": 0.0,
+            "k0_rxn": 36000.0,
+            "Ea_rxn": 97500.0,
+            "e1_peq": 33.12,
+            "e2_peq": -9005.5,
+            "latent_heat": 43000.0,
+            "Vm_hydrate": 2.274e-5,
+            "Vh_init": 1.0,
+            "vop_terminate_frac": 0.01,
+            "dx_phys": 1.0e-5,
+            "dt_phys": 1.0e-6,
+            "drive_mode": 1,
+            "Gx": 0.0,
+            "Gy": 0.0,
+        },
+        notes="Spherical hydrate decomposition with bottom-wall 323K heating.",
+    ),
+    "mcmp_hydrate_porous": ModelDefinition(
+        name="mcmp_hydrate_porous",
+        description=(
+            "MCMP hydrate porous: right-boundary heating (T_inlet=298.15K), "
+            "multi-particle porous media with hydrate decomposition."
+        ),
+        model_family="mcmp",
+        n_components=2,
+        eos=EOSParams.peng_robinson(a=2 / 49, b=2 / 21, R=1.0, T_reduced=0.80),
+        collision=CollisionParams.mcmp_mrt(
+            tau_p_a=0.593418,
+            tau_p_b=0.515411,
+            kappa=0.7698,
+        ),
+        force=ForceParams.shan_chen(GAB=0.24, GBA=0.24, sigmaA=0.11),
+        wetting=WettingParams.material_mapped(
+            theta_by_material={1: 30.0, 2: 80.0},
+        ),
+        cuda_binary="mcmp_sim_hydrate",
+        status="pending_verification",
+        initial={
+            "Sw": 0.30,
+            "init_eq": 1,
+            "hydrate_enable": True,
+            "hydrate_start_step": 0,
+            "T0_init": 278.15,
+            "T0_inlet": 298.15,
+            "thermal_bc_side": 3,
+            "lambda_fluid": 0.6,
+            "lambda_hydrate": 0.49,
+            "lambda_solid": 0.9,
+            "rhocp_fluid": 4200000.0,
+            "rhocp_hydrate": 2100000.0,
+            "rhocp_solid": 2000000.0,
+            "D_mol_water": 1.85e-9,
+            "Henry_KH": 0.1,
+            "Cm_init": 0.0,
+            "k0_rxn": 36000.0,
+            "Ea_rxn": 97500.0,
+            "e1_peq": 33.12,
+            "e2_peq": -9005.5,
+            "latent_heat": 43000.0,
+            "Vm_hydrate": 2.274e-5,
+            "Vh_init": 1.0,
+            "vop_terminate_frac": 0.01,
+            "dx_phys": 1.0e-5,
+            "dt_phys": 1.0e-6,
+            "drive_mode": 1,
+            "Gx": 0.0,
+            "Gy": 0.0,
+        },
+        notes="Porous media hydrate with right-boundary 298K heating.",
+    ),
+    # ── 3D models (placeholder — pending D3Q19 lattice + CUDA 3D solver) ──
+    # fmt: off
+    # "scmp_cs_huang_128_3d": ModelDefinition(
+    #     name="scmp_cs_huang_128_3d",
+    #     description="Huang SCMP 3D: 128³, CS-EOS, D3Q19 MRT.",
+    #     model_family="scmp", n_components=1, n_dimensions=3,
+    #     eos=EOSParams.carnahan_starling(T_reduced=0.70),
+    #     collision=CollisionParams.huang_mrt(tau=1.5),
+    #     force=ForceParams.huang_zhang(epsilon=1.7),
+    #     wetting=WettingParams.scmp_neutral(),
+    #     cuda_binary="mcmp_huang_128_3d", grid=(128, 128, 128),
+    #     status="pending_verification",
+    # ),
+    # fmt: on
 }
 
 

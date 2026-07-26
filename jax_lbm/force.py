@@ -98,8 +98,8 @@ def adsorption_force(psi, mask_wall, G_ads=0.0):
     -------
     F_ads : (nx, ny, 2) array
     """
-    if G_ads == 0.0:
-        return jnp.zeros((psi.shape[0], psi.shape[1], 2), dtype=psi.dtype)
+    # Always compute the force (JIT-safe, no early return).
+    # When G_ads=0 or mask_wall is all False, result is naturally zero.
 
     # Build indicator field: s=1 for wall nodes, 0 for fluid
     s_field = jnp.where(mask_wall, 1.0, 0.0).astype(psi.dtype)
@@ -164,3 +164,149 @@ def total_force(psi, rho, mask_wall, G_sc=-1.0, G_ads=0.0, Gx=0.0, Gy=0.0):
     if Gx != 0.0 or Gy != 0.0:
         F = F + body_force(rho, Gx=Gx, Gy=Gy)
     return F
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Huang & Wu (2016) 三阶力修正 — Q_m 表面张力修正 + Guo 力源项
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def compute_Q_huang(
+    psi,
+    Fx_mol,
+    Fy_mol,
+    k1=1.0 / 12.0,
+    k2=0.0,
+    psi_cut=1e-3,
+    G=-1.0,
+    c=1.0,
+    se=1.0,
+    st=1.0,
+    sp=1.0,
+):
+    """Q_m surface-tension correction in moment space (Huang & Wu 2016 Eq. 57-62).
+
+    Translates CUDA ``compute_Q_huang_gpu`` line-for-line into JAX.
+
+    Uses the identity ∇ψ = −F_mol/(G·ψ) to avoid explicit finite-difference
+    gradients, then constructs the third-order isotropic correction in the
+    MRT moment basis.
+
+    Parameters
+    ----------
+    psi : (nx, ny, 1) array — pseudopotential
+    Fx_mol, Fy_mol : (nx, ny, 1) arrays — molecular force (pure SC, no adsorption)
+    k1 : float — first Huang coefficient (derived from ε: k1 = −ε/8 − k2)
+    k2 : float — second Huang coefficient (anisotropy, default 0)
+    psi_cut : float — ψ² floor to avoid division by zero (default 1e-3)
+    G : float — interaction strength (default −1.0)
+    c : float — lattice speed (default 1.0 for D2Q9)
+    se : float — energy relaxation rate s_e (A_a[1])
+    st : float — trace relaxation rate s_t (A_a[2])
+    sp : float — stress relaxation rate s_p (A_a[7])
+
+    Returns
+    -------
+    C : (nx, ny, 9) array — moment-space correction
+        Only slots 1 (e), 2 (ε), 7 (pxx), 8 (pxy) are non-zero.
+    """
+    # — |F_mol|² —
+    F2 = Fx_mol * Fx_mol + Fy_mol * Fy_mol  # (nx, ny, 1)
+
+    # — ψ² + cut² floor —
+    psi2 = psi * psi + psi_cut * psi_cut  # (nx, ny, 1)
+
+    # — denominator G·ψ²·c² with sign-preserving clamp —
+    denom = G * psi2 * c * c
+    denom_safe = jnp.where(
+        jnp.abs(denom) < 1e-12,
+        jnp.sign(denom) * 1e-12,
+        denom,
+    )
+
+    # — Moment-space Q_m components (paper Eq. 59-62) —
+    # Qm1: isotropic trace (affects surface tension magnitude)
+    Qm1 = 3.0 * (k1 + 2.0 * k2) * F2 / denom_safe
+    # Qm7: diagonal stress anisotropy
+    Qm7 = k1 * (Fx_mol * Fx_mol - Fy_mol * Fy_mol) / denom_safe
+    # Qm8: off-diagonal stress
+    Qm8 = k1 * Fx_mol * Fy_mol / denom_safe
+
+    # — Bake relaxation rates into C (CUDA convention: +C·Δt in collision) —
+    nx, ny = psi.shape[0], psi.shape[1]
+    C = jnp.zeros((nx, ny, 9), dtype=jnp.float64)
+    C = C.at[..., 1].set(se * Qm1[..., 0])  # s_e · Qm1
+    C = C.at[..., 2].set(-st * Qm1[..., 0])  # −s_t · Qm1
+    C = C.at[..., 7].set(sp * Qm7[..., 0])  # s_p · Qm7
+    C = C.at[..., 8].set(sp * Qm8[..., 0])  # s_p · Qm8
+    # slots 0,3,4,5,6 remain zero
+    return C
+
+
+def compute_S_guo(ux, uy, Fx, Fy):
+    """Guo forcing source term in moment space (single-component).
+
+    Translates CUDA ``compute_S_huang_gpu`` line-for-line into JAX.
+
+    Parameters
+    ----------
+    ux, uy : (nx, ny, 1) arrays — macroscopic velocity (half-force corrected)
+    Fx, Fy : (nx, ny, 1) arrays — total force (molecular + adsorption + body)
+
+    Returns
+    -------
+    S : (nx, ny, 9) array — Guo source term in moment space
+    """
+    uF = ux * Fx + uy * Fy  # (nx, ny, 1)
+
+    nx, ny = ux.shape[0], ux.shape[1]
+    S = jnp.zeros((nx, ny, 9), dtype=jnp.float64)
+    S = S.at[..., 0].set(0.0)
+    S = S.at[..., 1].set(6.0 * uF[..., 0])
+    S = S.at[..., 2].set(-6.0 * uF[..., 0])
+    S = S.at[..., 3].set(Fx[..., 0])
+    S = S.at[..., 4].set(-Fx[..., 0])
+    S = S.at[..., 5].set(Fy[..., 0])
+    S = S.at[..., 6].set(-Fy[..., 0])
+    S = S.at[..., 7].set(2.0 * (ux * Fx - uy * Fy)[..., 0])
+    S = S.at[..., 8].set((ux * Fy + uy * Fx)[..., 0])
+    return S
+
+
+def huang_zhang_force_and_correction(
+    psi, k1=1.0 / 12.0, k2=0.0, psi_cut=1e-3, G=-1.0, c=1.0, se=1.0, st=1.0, sp=1.0
+):
+    """Full Huang-Zhang force pipeline: F_mol + Q_m(C) + S_guo.
+
+    Convenience wrapper that computes the SC molecular force, the Q_m
+    surface-tension correction, and the Guo source term in one call.
+
+    Parameters
+    ----------
+    psi : (nx, ny, 1) — pseudopotential
+    k1, k2 : float — Huang coefficients
+    psi_cut : float — ψ² floor
+    G : float — interaction strength
+    c : float — lattice speed
+    se, st, sp : float — relaxation rates
+
+    Returns
+    -------
+    F_mol : (nx, ny, 2) — pure SC molecular force
+    C : (nx, ny, 9) — Q_m moment-space correction
+    S_guo : (nx, ny, 9) — placeholder (needs velocity for Guo term)
+    """
+    # Step 1: pure SC molecular force
+    F_mol = shan_chen_force(psi, G=G)
+
+    # Step 2: Q_m surface-tension correction
+    Fx = F_mol[..., 0:1]
+    Fy = F_mol[..., 1:2]
+    C = compute_Q_huang(
+        psi, Fx, Fy, k1=k1, k2=k2, psi_cut=psi_cut, G=G, c=c, se=se, st=st, sp=sp
+    )
+
+    # Step 3: placeholder S_guo (needs velocity, call compute_S_guo separately)
+    S_guo = jnp.zeros_like(C)
+
+    return F_mol, C, S_guo

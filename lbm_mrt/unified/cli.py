@@ -28,15 +28,31 @@ def cmd_models() -> int:
     print("=== SCMP Models ===")
     for name in scmp:
         m = ModelRegistry.get(name)
-        grid = f"{m.grid[0]}×{m.grid[1]}" if m.grid else "N/A"
-        print(f"  {name:35s}  {grid:10s}  {m.description[:60]}")
+        dim_str = f"{m.n_dimensions}D"
+        grid_str = "×".join(str(g) for g in m.grid) if m.grid else "N/A"
+        status_icon = {
+            "stable": "✅",
+            "experimental": "🔬",
+            "pending_verification": "⏳",
+        }.get(m.status, "❓")
+        print(
+            f"  {status_icon} {name:35s}  {dim_str} {grid_str:10s}  {m.description[:55]}"
+        )
 
     if mcmp:
         print("\n=== MCMP Models ===")
         for name in mcmp:
             m = ModelRegistry.get(name)
+            dim_str = f"{m.n_dimensions}D"
             binary = m.cuda_binary or "auto-detect"
-            print(f"  {name:35s}  bin={binary:20s}  {m.description[:60]}")
+            status_icon = {
+                "stable": "✅",
+                "experimental": "🔬",
+                "pending_verification": "⏳",
+            }.get(m.status, "❓")
+            print(
+                f"  {status_icon} {name:35s}  {dim_str} bin={binary:20s}  {m.description[:55]}"
+            )
     else:
         print("\n(No MCMP models registered)")
 

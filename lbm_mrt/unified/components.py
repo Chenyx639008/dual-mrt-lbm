@@ -261,6 +261,34 @@ class CollisionParams:
             d["kappa"] = self.kappa
         return d
 
+    def __post_init__(self):
+        """Validate collision parameters."""
+        if self.tau is not None and self.tau <= 0.5:
+            raise ValueError(
+                f"τ = {self.tau} ≤ 0.5 — kinematic viscosity ν = cs²(τ−0.5) "
+                f"would be negative. τ must be > 0.5 for both BGK and MRT."
+            )
+        if self.tau_p_a is not None and self.tau_p_a <= 0.5:
+            raise ValueError(f"τ_p_a = {self.tau_p_a} ≤ 0.5 (component A)")
+        if self.tau_p_b is not None and self.tau_p_b <= 0.5:
+            raise ValueError(f"τ_p_b = {self.tau_p_b} ≤ 0.5 (component B)")
+        # Warn if MCMP τ mismatch is large (> 20%)
+        if (
+            self.tau_p_a is not None
+            and self.tau_p_b is not None
+            and self.tau_p_a > 0
+            and self.tau_p_b > 0
+        ):
+            ratio = max(self.tau_p_a, self.tau_p_b) / min(self.tau_p_a, self.tau_p_b)
+            if ratio > 1.2:
+                import warnings
+
+                warnings.warn(
+                    f"MCMP τ mismatch: τ_a={self.tau_p_a:.4f}, "
+                    f"τ_b={self.tau_p_b:.4f} (ratio={ratio:.2f}). "
+                    f"Large mismatch may cause numerical instability."
+                )
+
 
 @dataclass(frozen=True)
 class ForceParams:
@@ -359,6 +387,23 @@ class ForceParams:
             d["GBA"] = self.GBA
             d["sigmaA"] = self.sigmaA
         return d
+
+    def __post_init__(self):
+        """Validate force parameters."""
+        if self.force_type == ForceType.SHAN_CHEN:
+            if abs(self.GAB - self.GBA) > 1e-10:
+                raise ValueError(
+                    f"Shan-Chen interaction matrix must be symmetric: "
+                    f"GAB={self.GAB} ≠ GBA={self.GBA}"
+                )
+            if self.sigmaA < 0:
+                raise ValueError(f"sigmaA={self.sigmaA} must be ≥ 0")
+        if self.force_type == ForceType.HUANG_ZHANG:
+            if self.G >= 0:
+                raise ValueError(
+                    f"G={self.G} ≥ 0 — SCMP interaction strength must be "
+                    f"negative (attractive) for phase separation."
+                )
 
 
 @dataclass(frozen=True)
@@ -468,6 +513,20 @@ class WettingParams:
             d["GAw_m"] = self.GAw_m
             d["GAw_c"] = self.GAw_c
         return d
+
+    def __post_init__(self):
+        """Validate wetting parameters."""
+        if not 0.0 <= self.contact_angle_deg <= 180.0:
+            raise ValueError(
+                f"Contact angle {self.contact_angle_deg}° out of range [0, 180]"
+            )
+        if self.GAw_m <= 0:
+            raise ValueError(f"GAw_m={self.GAw_m} must be positive")
+        for mat, theta in self.theta_by_material.items():
+            if not 0.0 <= theta <= 180.0:
+                raise ValueError(
+                    f"Material {mat} contact angle {theta}° out of range [0, 180]"
+                )
 
     def __post_init__(self):
         """Validate contact angle range."""

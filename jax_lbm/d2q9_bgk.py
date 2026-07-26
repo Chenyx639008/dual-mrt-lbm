@@ -143,6 +143,11 @@ def _find_coexistence(T_reduced=0.70, a=1.0, b=4.0, R=1.0):
 def streaming(f):
     """Periodic streaming via jnp.roll.
 
+    Standard LBM post-collision streaming:
+        f_new(x + c_k·Δt, k) = f_old(x, k)
+    equivalent to
+        f_new(x, k) = f_old(x − c_k·Δt, k)
+
     Parameters
     ----------
     f : (nx, ny, 9) array
@@ -153,10 +158,11 @@ def streaming(f):
     """
     f_streamed = jnp.zeros_like(f)
     for k in range(Q):
+        # f_new(x, k) = f_old(x − c_k, k) → roll forward by c_k
         f_streamed = f_streamed.at[..., k].set(
             jnp.roll(
-                jnp.roll(f[..., k], -C[k, 0].astype(int), axis=0),
-                -C[k, 1].astype(int),
+                jnp.roll(f[..., k], C[k, 0].astype(int), axis=0),
+                C[k, 1].astype(int),
                 axis=1,
             )
         )
@@ -349,6 +355,209 @@ def run_lbm_advanced(
         return (f, omega_val), None
 
     (f_final, _), _ = lax.scan(step_fn, (f0, omega), None, length=n_steps)
+    return f_final
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🆕 SCMP Huang step — CUDA-equivalent (P0a: JAX 轨物理对等化)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@partial(
+    jit,
+    static_argnames=(
+        "k1",
+        "k2",
+        "psi_cut",
+        "G_mol",
+        "c_lat",
+        "se",
+        "st",
+        "sp",
+        "alpha_meq",
+        "theta_deg",
+        "wall",
+    ),
+)
+def _step_scmp_huang_core(
+    f,
+    s_relax,
+    eos_a,
+    eos_b,
+    eos_R,
+    eos_T,
+    k1,
+    k2,
+    psi_cut,
+    G_mol,
+    c_lat,
+    se,
+    st,
+    sp,
+    alpha_meq,
+    G_ads=0.0,
+    theta_deg=None,
+    wall="bottom",
+):
+    """Single SCMP Huang time-step with optional adsorption + contact angle BC.
+
+    Execution order mirrors CUDA ``scmp_iteration()`` exactly.
+
+    Parameters
+    ----------
+    G_ads : float — adsorption strength (0 = no wall interaction)
+    theta_deg : float or None — contact angle in degrees (None = periodic BC)
+    wall : str — wall position for ghost BC: 'bottom', 'top'
+
+    Returns (f_new,) — compatible with lax.scan.
+    """
+    from jax_lbm.eos import cs_eos_pressure
+    from jax_lbm.force import (
+        compute_Q_huang,
+        compute_S_guo,
+        shan_chen_force,
+        adsorption_force,
+    )
+    from jax_lbm.wetting import apply_psi_ghost_bc
+
+    # — Step 1: ρ = Σf_i (density from post-streaming f) —
+    rho = jnp.sum(f, axis=-1, keepdims=True)
+
+    # — Step 2: ψ = sqrt(2(p_EOS − ρcs²)/(Gc²)) —
+    p_eos = cs_eos_pressure(rho, a=eos_a, b=eos_b, R=eos_R, T=eos_T)
+    psi_sq = 2.0 * (p_eos - rho * CS2) / (G_mol * c_lat * c_lat)
+    psi_sq = jnp.clip(psi_sq, 0.0, None)
+    psi = jnp.sqrt(psi_sq)
+
+    # — Step 3: Ghost ψ BC (Scheme IV, for contact angle) —
+    if theta_deg is not None:
+        psi = apply_psi_ghost_bc(psi, theta_deg, wall=wall)
+
+    # — Step 4: F_mol = pure SC molecular force —
+    F_mol = shan_chen_force(psi, G=G_mol)
+
+    # — Step 5: C_qm = Q_m(F_mol) — surface-tension correction —
+    Fx_mol = F_mol[..., 0:1]
+    Fy_mol = F_mol[..., 1:2]
+    C_qm = compute_Q_huang(
+        psi,
+        Fx_mol,
+        Fy_mol,
+        k1=k1,
+        k2=k2,
+        psi_cut=psi_cut,
+        G=G_mol,
+        c=c_lat,
+        se=se,
+        st=st,
+        sp=sp,
+    )
+
+    # — Step 6: F_total = F_mol + F_ads (adsorption AFTER Q_m) —
+    F_total = F_mol
+    # Always compute adsorption (zero when no wall) — avoids JIT conditional
+    nx_f, ny_f = f.shape[0], f.shape[1]
+    mask_wall = jnp.zeros((nx_f, ny_f), dtype=bool)
+    if theta_deg is not None:
+        if wall == "bottom":
+            mask_wall = mask_wall.at[:, 0].set(True)
+        elif wall == "top":
+            mask_wall = mask_wall.at[:, ny_f - 1].set(True)
+    F_ads = adsorption_force(psi, mask_wall, G_ads=G_ads)
+    F_total = F_mol + F_ads
+
+    # — Step 7: u = (u_raw + 0.5·F_total)/ρ — half-force velocity correction —
+    rho_safe = jnp.clip(rho, 1e-8, None)
+    u_raw = jnp.dot(f, C.astype(jnp.float64)) / rho_safe
+    u = u_raw + 0.5 * F_total / rho_safe
+
+    # — Numerical guard: velocity cap (matches CUDA UMAX=0.15) —
+    UMAX = 0.15
+    u2 = u[..., 0] * u[..., 0] + u[..., 1] * u[..., 1]
+    u2_safe = jnp.clip(u2, 1e-12, None)
+    scale = jnp.where(u2 > UMAX * UMAX, UMAX / jnp.sqrt(u2_safe), 1.0)
+    u = u * scale[..., jnp.newaxis]
+
+    # — Step 8: S_guo = Guo source term from corrected u —
+    ux = u[..., 0:1]
+    uy = u[..., 1:2]
+    Fx = F_total[..., 0:1]
+    Fy = F_total[..., 1:2]
+    S_guo = compute_S_guo(ux, uy, Fx, Fy)
+
+    # — Step 9: MRT collision (Guo+C mode) —
+    from jax_lbm.collision import collision_mrt as _collision_mrt
+
+    f_coll = _collision_mrt(f, s_relax, S_guo=S_guo, C=C_qm, alpha_meq=alpha_meq)
+
+    # — Step 10: Streaming —
+    f_new = streaming(f_coll)
+
+    # — Step 11: BC (bounce-back handled externally if needed) —
+
+    return f_new
+
+
+def step_scmp_huang(
+    f0,
+    s_relax,
+    n_steps,
+    eos_a=1.0,
+    eos_b=4.0,
+    eos_R=1.0,
+    eos_T=0.066,
+    k1=1.0 / 12.0,
+    k2=0.0,
+    psi_cut=1e-3,
+    G_mol=-1.0,
+    c_lat=1.0,
+    se=1.5,
+    st=1.5,
+    sp=1.5,
+    alpha_meq=1.0,
+):
+    """Run SCMP Huang simulation with CUDA-equivalent physics.
+
+    Parameters
+    ----------
+    f0 : (nx, ny, 9) — initial distributions
+    s_relax : (9,) array — MRT relaxation rates
+    n_steps : int — number of time steps
+    eos_a, eos_b, eos_R, eos_T : float — CS-EOS parameters
+    k1, k2 : float — Huang coefficients
+    psi_cut : float — ψ² floor for Q_m denominator
+    G_mol : float — interaction strength (default −1.0)
+    c_lat : float — lattice speed (default 1.0)
+    se, st, sp : float — relaxation rates for Q_m baking
+    alpha_meq : float — equilibrium moment coefficient
+
+    Returns
+    -------
+    f_final : (nx, ny, 9) — final distributions
+    """
+    step_fn = partial(
+        _step_scmp_huang_core,
+        s_relax=s_relax,
+        eos_a=eos_a,
+        eos_b=eos_b,
+        eos_R=eos_R,
+        eos_T=eos_T,
+        k1=k1,
+        k2=k2,
+        psi_cut=psi_cut,
+        G_mol=G_mol,
+        c_lat=c_lat,
+        se=se,
+        st=st,
+        sp=sp,
+        alpha_meq=alpha_meq,
+    )
+
+    def scan_fn(f, _):
+        f_new = step_fn(f)
+        return f_new, None
+
+    f_final, _ = lax.scan(scan_fn, f0, None, length=n_steps)
     return f_final
 
 

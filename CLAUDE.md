@@ -1,27 +1,27 @@
 # dual-mrt-lbm — AI 入口
 
-> **当前状态**: 双轨架构 (CUDA 生产 ↔ JAX 镜像) Phase 1-6 · 生产就绪 (ε=1.7) · MCMP 已纳入 | 2026-07-24
+> **当前状态**: 双轨架构 Phase 6 完成 (10/11) · 48 项 JAX 自动化测试 · MCMP + 水合物已注册 | 2026-07-26
 > **GitHub**: https://github.com/Chenyx639008/dual-mrt-lbm
 > **一键入口**: `uv run lbm run scmp_cs_huang_256`
-> **框架手册**: [`research/FRAMEWORK_GUIDE.md`](research/FRAMEWORK_GUIDE.md) | **可行性评估**: [`research/unified_framework_feasibility.md`](research/unified_framework_feasibility.md) | **研究索引**: [`research/INDEX.md`](research/INDEX.md) | **CUDA 内核**: [`lbm_mrt/solver/CLAUDE.md`](lbm_mrt/solver/CLAUDE.md)
+> **框架手册**: [`research/FRAMEWORK_GUIDE.md`](research/FRAMEWORK_GUIDE.md) | **研究索引**: [`research/INDEX.md`](research/INDEX.md) | **实施记录**: [`research/implementation/`](research/implementation/) | **测试**: [`jax_lbm/tests/README.md`](jax_lbm/tests/README.md)
 
-双轨 MRT-LBM 两相流 + 甲烷水合物分解 + D2Q9 SCMP — C++17/CUDA 生产轨 + JAX 镜像验证轨 + Python 统一调度。
+双轨 MRT-LBM 两相流 + 甲烷水合物分解 — C++17/CUDA 生产轨 + JAX 镜像验证轨 + Python 统一调度。
 
 ---
 
 ## 快速命令
 
 ```bash
-uv sync --all-groups                          # 安装全部依赖
-uv run lbm-build --huang --huang-unified      # 编译所有 SCMP 二进制
-uv run lbm models                             # 列出预注册模型
-uv run lbm run scmp_cs_huang_256 --steps 50000  # 运行
-uv run pytest && uv run ruff check . && uv run ruff format .  # 测试 + lint
+uv sync --all-groups
+uv run lbm models                             # 9 个注册模型 (5 SCMP + 2 MCMP + 2 Hydrate)
+uv run lbm run scmp_cs_huang_256 --steps 50000
+JAX_ENABLE_X64=1 uv run pytest jax_lbm/tests/ -v  # 48 项自动化测试
+uv run pytest && uv run ruff check . && uv run ruff format .
 ```
 
 ---
 
-## 核心约定（AI 必须知道）
+## 核心约定
 
 
 - **配置流**: YAML → `load_config()` → flat dict → `params.txt` → `load_params_txt()` → `__constant__` 设备内存。水合物运行时叠加 `hydrate.yaml`。SCMP 统一路径：`ModelDefinition.to_params_dict()` → `params.txt`。
@@ -39,10 +39,12 @@ uv run pytest && uv run ruff check . && uv run ruff format .  # 测试 + lint
 |------|------|---------|
 | `lbm_mrt/solver/` | CUDA C++17 核心（内核、EOS、边界、水合物） | [`CLAUDE.md`](lbm_mrt/solver/CLAUDE.md) |
 | `lbm_mrt/unified/` | 🆕 统一框架（models / CLI / runner） | — |
-| `jax_lbm/` | 🆕 JAX D2Q9 BGK + Shan-Chen 验证工具 | — |
+| `jax_lbm/` | 🆕 JAX D2Q9 BGK + MRT + Huang-Zhang 力 + 伴随梯度 | [`tests/README.md`](jax_lbm/tests/README.md) |
+| `jax_lbm/tests/` | 🆕 48 项自动化测试 (streaming/力/碰撞/EOS/液滴/BC/伴随/vmap) | [`README.md`](jax_lbm/tests/README.md) |
 | `configs/` | YAML 配置（MCMP 默认 + 水合物叠加 + SCMP） | [`INDEX.md`](configs/INDEX.md) |
 | `scripts/` | 工作流入口（01-06）+ 批量脚本 | [`README.md`](scripts/README.md) |
-| `research/` | 科学文档、水合物指南、统一框架规划 | [`INDEX.md`](research/INDEX.md) |
+| `research/` | 科学文档、水合物指南、Phase 6 实施记录 | [`INDEX.md`](research/INDEX.md) |
+| `research/implementation/` | 🆕 Phase 6 逐任务实施文档 (01-07) | [`README.md`](research/implementation/README.md) |
 | `validation/` | contact_angle / mesh_convergence / surface | — |
 | `data/` | 几何 (.plt)、benchmark、design CSV | — |
 | `results/` | 模拟输出（gitignored） | — |
@@ -56,7 +58,8 @@ uv run pytest && uv run ruff check . && uv run ruff format .  # 测试 + lint
 | **SCMP 统一** | `ModelDefinition` → `to_params_dict()` → `params.txt` → `mcmp_huang*` → VTK |
 | **MCMP 两相** | `configs/default.yaml` → `load_config()` → `params.txt` → `mcmp_sim` → VTK |
 | **MCMP 水合物** | `default.yaml` + `hydrate*.yaml`（叠加）→ `params.txt` → `mcmp_sim_hydrate` → VTK |
-| **JAX 验证** | `d2q9_bgk.py`（独立运行，不经过 params.txt）→ autograd 梯度 |
+| **JAX 验证** | `d2q9_bgk.py` → `collision_mrt(Guo+C)` → `compute_Q_huang` → autograd 梯度 |
+| **JAX 多GPU** | `sharded_lbm.py` → shard_map 域分解 (需 GPU 实测) |
 
 ---
 
