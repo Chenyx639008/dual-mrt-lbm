@@ -1,6 +1,16 @@
 # Research 文档索引
 
-> **更新**: 2026-07-26 | **AI 入口**: [CLAUDE.md](../CLAUDE.md)
+> **更新**: 2026-08-02 | **AI 入口**: [CLAUDE.md](../CLAUDE.md)
+
+## 相场开发（最新）
+
+| 文件 | 说明 |
+|------|------|
+| [phasefield_development_plan.md](phasefield_development_plan.md) | **相场 LBM 开发计划（从简到复杂）**：单相 NS → 保守 AC → 两相耦合（Laplace/共存/伪势电流）→ 润湿 → 两相流动 → hydrate 集成 → mode 4。JAX 先行 + CUDA 双轨。阶段 0 脚手架已落地（pf 模型族 + Poiseuille 测试） |
+| [literature/SC_vs_phasefield_and_3D_migration_guide.md](literature/SC_vs_phasefield_and_3D_migration_guide.md) | Yang SC→相场转变 + 2D→3D 迁移 + 自研路线（复制自 hydrate 仓库） |
+| [literature/phase_field_2d_implementation_plan.md](literature/phase_field_2d_implementation_plan.md) | 相场 LB + 无量纲框架 2D 实现（Yang SI 逐字公式 S10-S41）（复制自 hydrate 仓库） |
+| [literature/yang_papers_pdf_deep_analysis.md](literature/yang_papers_pdf_deep_analysis.md) | Yang 五篇 PDF 直读权威分析（复制自 hydrate 仓库） |
+| [literature/hydrate_formation_thermodynamics.md](literature/hydrate_formation_thermodynamics.md) | 水合物形成热力学总纲（双场表示/软钉扎/自限终态）（复制自 hydrate 仓库，集成用） |
 
 ## 核心文档
 

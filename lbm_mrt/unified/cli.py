@@ -56,6 +56,24 @@ def cmd_models() -> int:
     else:
         print("\n(No MCMP models registered)")
 
+    pf = ModelRegistry.list_pf()
+    if pf:
+        print("\n=== Phase-Field (pf) Models ===")
+        for name in pf:
+            m = ModelRegistry.get(name)
+            dim_str = f"{m.n_dimensions}D"
+            grid_str = "×".join(str(g) for g in m.grid) if m.grid else "N/A"
+            status_icon = {
+                "stable": "✅",
+                "experimental": "🔬",
+                "pending_verification": "⏳",
+            }.get(m.status, "❓")
+            print(
+                f"  {status_icon} {name:35s}  {dim_str} {grid_str:10s}  {m.description[:55]}"
+            )
+    else:
+        print("\n(No Phase-Field models registered)")
+
     return 0
 
 

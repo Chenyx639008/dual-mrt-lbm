@@ -40,6 +40,7 @@ from .models import (
     ModelDefinition,
     ModelRegistry,
     SCMP_MODELS,
+    PF_MODELS,
 )
 from .runner import (
     run_model,
@@ -63,6 +64,7 @@ __all__ = [
     "ModelDefinition",
     "ModelRegistry",
     "SCMP_MODELS",
+    "PF_MODELS",
     # Runner
     "run_model",
     "run_scmp",

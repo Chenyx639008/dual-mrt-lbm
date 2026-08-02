@@ -154,9 +154,9 @@ class ModelDefinition:
         """Validate model consistency."""
         if self.n_components not in (1, 2):
             raise ValueError(f"n_components must be 1 or 2, got {self.n_components}")
-        if self.model_family not in ("scmp", "mcmp"):
+        if self.model_family not in ("scmp", "mcmp", "pf"):
             raise ValueError(
-                f"model_family must be 'scmp' or 'mcmp', got {self.model_family}"
+                f"model_family must be 'scmp', 'mcmp' or 'pf', got {self.model_family}"
             )
         if self.model_family == "scmp" and self.n_components != 1:
             raise ValueError("SCMP models require n_components=1")
@@ -176,6 +176,10 @@ class ModelDefinition:
             Flat key-value mapping suitable for write_params_txt().
             Keys match exactly what sim_utils.cu::load_params_txt() expects.
         """
+        # Phase-field family uses its own params schema (pf_* keys)
+        if self.model_family == "pf":
+            return self._to_pf_params_dict()
+
         params: dict[str, Any] = {}
 
         # Core mode flag
@@ -238,6 +242,46 @@ class ModelDefinition:
 
         return params
 
+    def _to_pf_params_dict(self) -> dict[str, Any]:
+        """Phase-field family params → flat params.txt dict (pf_* keys).
+
+        The phase-field solver is under development (see
+        research/phasefield_development_plan.md). Stage gating via pf_mode:
+          0 = single-phase incompressible NS (Stage 0)
+          1 = conservative Allen-Cahn only (Stage 1)
+          2 = AC + NS coupled (Stage 2+)
+        Phase-field params live in the free-form ``initial`` dict.
+        The JAX track (jax_lbm/pf/) consumes the same schema for verification.
+        """
+        pf = self.initial
+        params: dict[str, Any] = {}
+        params["pf_mode"] = int(pf.get("pf_mode", 0))
+        params["pf_scheme"] = str(pf.get("pf_scheme", "conservative_ac"))
+        params["pf_W"] = float(pf.get("pf_W", 3.0))         # interface width (lu)
+        params["pf_M"] = float(pf.get("pf_M", 0.02))        # mobility
+        params["pf_sigma"] = float(pf.get("pf_sigma", 0.01))  # surface tension
+        params["pf_rho_g"] = float(pf.get("pf_rho_g", 0.001))
+        params["pf_rho_w"] = float(pf.get("pf_rho_w", 1.0))
+        params["pf_mu_g"] = float(pf.get("pf_mu_g", 0.1))
+        params["pf_mu_w"] = float(pf.get("pf_mu_w", 0.1))
+        params["pf_theta_deg"] = float(pf.get("pf_theta_deg", 90.0))
+        params["pf_tau"] = float(pf.get("pf_tau", 0.8))     # NS relaxation
+        # droplet initial condition (Stage 2)
+        params["pf_R0"] = float(pf.get("pf_R0", 30.0))
+        params["pf_xc"] = float(pf.get("pf_xc", 0.0))
+        params["pf_yc"] = float(pf.get("pf_yc", 0.0))
+        # misc required keys (harmless defaults)
+        params.setdefault("init_eq", 0)
+        params.setdefault("drive_mode", 1)
+        params.setdefault("Gx", 0.0)
+        params.setdefault("Gy", 0.0)
+        params.setdefault("geom_file", "")
+        if self.grid is not None and self.grid[0] > 0 and self.grid[1] > 0:
+            params.setdefault("nx_override", self.grid[0])
+            params.setdefault("ny_override", self.grid[1])
+        params.update(self.numerical)
+        return params
+
     def resolve_binary(self) -> str:
         """Return the absolute path to the CUDA binary for this model.
 
@@ -262,6 +306,9 @@ class ModelDefinition:
             if self.initial.get("hydrate_enable"):
                 return os.path.join(SOLVER_DIR, "mcmp_sim_hydrate")
             return os.path.join(SOLVER_DIR, "mcmp_sim")
+        elif self.model_family == "pf":
+            # Phase-field CUDA binary (Stage 0+); JAX track first.
+            return os.path.join(SOLVER_DIR, "pf_ns_2d")
         return os.path.join(SOLVER_DIR, "mcmp_sim")
 
 
@@ -606,6 +653,58 @@ MCMP_MODELS: dict[str, ModelDefinition] = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Pre-registered Phase-Field models (family "pf") — see
+# research/phasefield_development_plan.md
+# JAX track (jax_lbm/pf/) is the algorithm-verification path; CUDA binary
+# (pf_ns_2d) is under construction (Stage 0+).
+# ═══════════════════════════════════════════════════════════════════════════
+
+PF_MODELS: dict[str, ModelDefinition] = {
+    "pf_ns_single_2d": ModelDefinition(
+        name="pf_ns_single_2d",
+        description=(
+            "Phase-field Stage 0 scaffold: single-phase D2Q9 MRT incompressible NS "
+            "(no Allen-Cahn). Poiseuille / lid-driven cavity baseline."
+        ),
+        model_family="pf",
+        collision=CollisionParams.huang_mrt(tau=0.8),
+        n_components=1,
+        grid=(128, 64),
+        initial={"pf_mode": 0},
+        status="experimental",
+        notes=(
+            "Stage 0 scaffold: single-phase NS only. JAX track: "
+            "jax_lbm/pf/phase_field.py (Poiseuille test)."
+        ),
+    ),
+    "pf_ac_droplet_2d": ModelDefinition(
+        name="pf_ac_droplet_2d",
+        description=(
+            "Phase-field Stage 2 scaffold: conservative Allen-Cahn + NS coupled, "
+            "static droplet (Laplace pressure / coexistence benchmarks)."
+        ),
+        model_family="pf",
+        collision=CollisionParams.huang_mrt(tau=0.8),
+        n_components=1,
+        grid=(128, 128),
+        initial={
+            "pf_mode": 2,
+            "pf_W": 3.0,
+            "pf_M": 0.02,
+            "pf_sigma": 0.01,
+            "pf_rho_g": 0.001,
+            "pf_rho_w": 1.0,
+            "pf_R0": 30.0,
+            "pf_xc": 64.0,
+            "pf_yc": 64.0,
+        },
+        status="experimental",
+        notes="Droplet equilibrium / Laplace benchmark target (Stage 2).",
+    ),
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Model Registry
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -619,8 +718,9 @@ class ModelRegistry:
 
     _registry: dict[str, ModelDefinition] = dict(SCMP_MODELS)
 
-    # Merge MCMP models at class init
+    # Merge MCMP + Phase-Field models at class init
     _registry.update(MCMP_MODELS)
+    _registry.update(PF_MODELS)
 
     @classmethod
     def register(cls, model: ModelDefinition) -> None:
@@ -677,6 +777,11 @@ class ModelRegistry:
     def list_mcmp(cls) -> list[str]:
         """Return sorted list of MCMP model names."""
         return sorted(k for k, v in cls._registry.items() if v.model_family == "mcmp")
+
+    @classmethod
+    def list_pf(cls) -> list[str]:
+        """Return sorted list of Phase-Field model names."""
+        return sorted(k for k, v in cls._registry.items() if v.model_family == "pf")
 
     @classmethod
     def info(cls, name: str) -> str:

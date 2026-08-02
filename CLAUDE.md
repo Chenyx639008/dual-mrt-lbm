@@ -1,9 +1,9 @@
 # dual-mrt-lbm — AI 入口
 
-> **当前状态**: 双轨架构 Phase 6 完成 (10/11) · 48 项 JAX 自动化测试 · MCMP + 水合物已注册 | 2026-07-26
+> **当前状态**: 双轨架构 Phase 6 完成 (10/11) · 48 项 JAX 自动化测试 · MCMP + 水合物已注册 | 2026-07-26 | **+ 相场 pf 族脚手架（2026-08-02）**：`pf_ns_single_2d`/`pf_ac_droplet_2d` 已注册（`uv run lbm models`），JAX 阶段 0 单相 NS（Poiseuille）+ 阶段 1 保守 AC 已实现并通过 5 项测试；开发计划见 `research/phasefield_development_plan.md`
 > **GitHub**: https://github.com/Chenyx639008/dual-mrt-lbm
 > **一键入口**: `uv run lbm run scmp_cs_huang_256`
-> **框架手册**: [`research/FRAMEWORK_GUIDE.md`](research/FRAMEWORK_GUIDE.md) | **研究索引**: [`research/INDEX.md`](research/INDEX.md) | **实施记录**: [`research/implementation/`](research/implementation/) | **测试**: [`jax_lbm/tests/README.md`](jax_lbm/tests/README.md)
+> **框架手册**: [`research/FRAMEWORK_GUIDE.md`](research/FRAMEWORK_GUIDE.md) | **研究索引**: [`research/INDEX.md`](research/INDEX.md) | **实施记录**: [`research/implementation/`](research/implementation/) | **测试**: [`jax_lbm/tests/README.md`](jax_lbm/tests/README.md) | **相场计划**: [`research/phasefield_development_plan.md`](research/phasefield_development_plan.md)
 
 双轨 MRT-LBM 两相流 + 甲烷水合物分解 — C++17/CUDA 生产轨 + JAX 镜像验证轨 + Python 统一调度。
 
