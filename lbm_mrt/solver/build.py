@@ -23,14 +23,16 @@ from lbm_mrt.core.paths import SOLVER_DIR, SOLVER_INC, SOLVER_SRC
 # Source files for each build variant
 _BASE_SOURCES = ["main.cu", "LBM.cu", "steady_monitor.cu", "sim_utils.cu"]
 _HYDRATE_SOURCES = ["hydrate.cu", "hydrate_vop.cu"]
+_PF_SOURCES = ["pf_ns_2d.cu"]  # phase-field (self-contained, no LBM.cu dependency)
 
 
 def _detect_plt_dimensions(plt_path: str) -> tuple[int, int]:
     """Parse I= and J= from .plt ZONE header line."""
     import re
+
     with open(plt_path) as f:
         for line in f:
-            m = re.search(r'I\s*=\s*(\d+).*J\s*=\s*(\d+)', line)
+            m = re.search(r"I\s*=\s*(\d+).*J\s*=\s*(\d+)", line)
             if m:
                 return int(m.group(1)), int(m.group(2))
     raise ValueError(f"Cannot detect I,J from {plt_path}")
@@ -41,6 +43,7 @@ def build(
     huang: bool = False,
     porous: bool = False,
     huang_unified: bool = False,
+    pf: bool = False,
     plt_path: str | None = None,
     grid: tuple[int, int] | None = None,
     steps: int | None = None,
@@ -73,6 +76,9 @@ def build(
     compute = arch.replace("sm_", "compute_")
 
     source_names = _BASE_SOURCES + (_HYDRATE_SOURCES if hydrate else [])
+    if pf:
+        # Phase-field: self-contained module; only main.cu is needed from _BASE
+        source_names = ["main.cu"] + _PF_SOURCES
     sources = [os.path.join(SOLVER_SRC, name) for name in source_names]
 
     # Auto-detect grid from .plt if porous mode
@@ -80,7 +86,16 @@ def build(
         grid = _detect_plt_dimensions(plt_path)
         print(f"[lbm-build] auto-detected grid {grid[0]}x{grid[1]} from {plt_path}")
 
-    if porous:
+    if pf:
+        if grid is not None:
+            nx, ny = grid
+            grid_suffix = f"{nx}x{ny}" if nx != ny else f"{ny}"
+            binary_name = f"pf_ns_2d_{grid_suffix}"
+        else:
+            binary_name = "pf_ns_2d"
+        if steps is not None:
+            binary_name += f"_s{steps}"
+    elif porous:
         if grid is not None:
             nx, ny = grid
             binary_name = f"mcmp_huang_porous_{nx}x{ny}"
@@ -150,6 +165,16 @@ def build(
             cmd.append(f"-DHUANG_NOUTPUT={output_every}")
     if hydrate:
         cmd.append("-DHYDRATE_ENABLE")
+    if pf:
+        # Phase-field build: self-contained module, fixed grid via -DPF_NX/-DPF_NY
+        cmd.append("-DPF_BUILD")
+        if grid is not None:
+            nx, ny = grid
+            cmd.append(f"-DPF_NX={nx}")
+            cmd.append(f"-DPF_NY={ny}")
+        else:
+            cmd.append("-DPF_NX=256")
+            cmd.append("-DPF_NY=256")
     if debug:
         cmd += ["-g", "-G"]
     cmd += sources
@@ -226,6 +251,11 @@ def main() -> None:
         help="Build unified Huang SCMP binary (runtime grid via d_nx_active, max 1024×1024).",
     )
     p.add_argument(
+        "--pf",
+        action="store_true",
+        help="Build the phase-field binary (pf_ns_2d) — self-contained AC+NS module.",
+    )
+    p.add_argument(
         "--arch",
         default="sm_120",
         metavar="SM",
@@ -274,6 +304,7 @@ def main() -> None:
             output_dir=args.output_dir,
             dry_run=args.dry_run,
             huang_unified=args.huang_unified,
+            pf=args.pf,
         )
     )
 

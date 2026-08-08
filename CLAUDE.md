@@ -1,6 +1,6 @@
 # dual-mrt-lbm — AI 入口
 
-> **当前状态**: 双轨架构 Phase 6 完成 (10/11) · 48 项 JAX 自动化测试 · MCMP + 水合物已注册 | 2026-07-26 | **+ 相场 pf 族脚手架（2026-08-02）**：`pf_ns_single_2d`/`pf_ac_droplet_2d` 已注册（`uv run lbm models`），JAX 阶段 0 单相 NS（Poiseuille）+ 阶段 1 保守 AC 已实现并通过 5 项测试；开发计划见 `research/phasefield_development_plan.md`
+> **当前状态**: 双轨架构 Phase 6 完成 · 98 项 JAX 自动化测试 · MCMP + 水合物已注册 | 2026-08-08 | **相场阶段 0/1/2 ✅ + CUDA pf_ns_2d ✅ + 阶段 3 根因定位**：MRT-LB 保守 AC 液滴溶解根因=平衡矩矩序错乱（已数值验证）；实施计划 `research/phasefield_mrt_ac_implementation_plan.md`（BGK→MRT→耦合→湿壁→CUDA 五步）；文献库 `phasefield_LBM/`（Liang 2018 BGK 母本 + Yang 2024 MRT）
 > **GitHub**: https://github.com/Chenyx639008/dual-mrt-lbm
 > **一键入口**: `uv run lbm run scmp_cs_huang_256`
 > **框架手册**: [`research/FRAMEWORK_GUIDE.md`](research/FRAMEWORK_GUIDE.md) | **研究索引**: [`research/INDEX.md`](research/INDEX.md) | **实施记录**: [`research/implementation/`](research/implementation/) | **测试**: [`jax_lbm/tests/README.md`](jax_lbm/tests/README.md) | **相场计划**: [`research/phasefield_development_plan.md`](research/phasefield_development_plan.md)
@@ -15,7 +15,7 @@
 uv sync --all-groups
 uv run lbm models                             # 9 个注册模型 (5 SCMP + 2 MCMP + 2 Hydrate)
 uv run lbm run scmp_cs_huang_256 --steps 50000
-JAX_ENABLE_X64=1 uv run pytest jax_lbm/tests/ -v  # 48 项自动化测试
+JAX_ENABLE_X64=1 uv run pytest jax_lbm/tests/ -v  # 98 项自动化测试 (含相场 pf)
 uv run pytest && uv run ruff check . && uv run ruff format .
 ```
 
@@ -40,7 +40,8 @@ uv run pytest && uv run ruff check . && uv run ruff format .
 | `lbm_mrt/solver/` | CUDA C++17 核心（内核、EOS、边界、水合物） | [`CLAUDE.md`](lbm_mrt/solver/CLAUDE.md) |
 | `lbm_mrt/unified/` | 🆕 统一框架（models / CLI / runner） | — |
 | `jax_lbm/` | 🆕 JAX D2Q9 BGK + MRT + Huang-Zhang 力 + 伴随梯度 | [`tests/README.md`](jax_lbm/tests/README.md) |
-| `jax_lbm/tests/` | 🆕 48 项自动化测试 (streaming/力/碰撞/EOS/液滴/BC/伴随/vmap) | [`README.md`](jax_lbm/tests/README.md) |
+| `jax_lbm/tests/` | 🆕 98 项自动化测试 (streaming/力/碰撞/EOS/液滴/BC/伴随/vmap/相场 pf) | [`README.md`](jax_lbm/tests/README.md) |
+| `phasefield_LBM/` | 🆕 相场文献库（4 PDF 转换 MD+JSON，Liang 2018 / Yang 2024 / JCP 2023 / CMWA 2021 + 对比总结） | [`phasefield_literature_summary.md`](phasefield_LBM/phasefield_literature_summary.md) |
 | `configs/` | YAML 配置（MCMP 默认 + 水合物叠加 + SCMP） | [`INDEX.md`](configs/INDEX.md) |
 | `scripts/` | 工作流入口（01-06）+ 批量脚本 | [`README.md`](scripts/README.md) |
 | `research/` | 科学文档、水合物指南、Phase 6 实施记录 | [`INDEX.md`](research/INDEX.md) |

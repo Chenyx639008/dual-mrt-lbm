@@ -1,16 +1,21 @@
 # Research 文档索引
 
-> **更新**: 2026-08-02 | **AI 入口**: [CLAUDE.md](../CLAUDE.md)
+> **更新**: 2026-08-08 | **AI 入口**: [CLAUDE.md](../CLAUDE.md)
 
 ## 相场开发（最新）
 
 | 文件 | 说明 |
 |------|------|
-| [phasefield_development_plan.md](phasefield_development_plan.md) | **相场 LBM 开发计划（从简到复杂）**：单相 NS → 保守 AC → 两相耦合（Laplace/共存/伪势电流）→ 润湿 → 两相流动 → hydrate 集成 → mode 4。JAX 先行 + CUDA 双轨。阶段 0 脚手架已落地（pf 模型族 + Poiseuille 测试） |
+| [phasefield_development_plan.md](phasefield_development_plan.md) | **相场 LBM 开发计划（v4）**：单相 NS → 保守 AC → 两相耦合 → 润湿 → 两相流动 → hydrate 集成。阶段 0/1/2 ✅ + CUDA pf_ns_2d ✅；**阶段 3 定量湿壁阻塞于 MRT-LB AC** |
+| [phasefield_mrt_ac_implementation_plan.md](phasefield_mrt_ac_implementation_plan.md) | 🔴 **MRT-LB 保守 AC 实施计划（2026-08-08）**：液滴溶解根因=平衡矩矩序错乱（6 矩错误）；BGK 立真值→MRT 对标→耦合→湿壁→CUDA 五步；文献精确公式已数值验证 |
+| [phasefield_stage2_summary.md](phasefield_stage2_summary.md) | 阶段 2 总结：AC+NS 耦合、Laplace R²=0.9996、共存、伪速度 1.1e-4 |
+| [phasefield_stage3_summary.md](phasefield_stage3_summary.md) | 阶段 3 总结：NS 无滑移壁 ✅ + S17 公式 ✅ + 直接 FD AC 湿壁阻塞确认（MRT-LB AC 硬前置） |
+| [phasefield_execution_summary.md](phasefield_execution_summary.md) | 3 天自主执行总结（阶段 0-3 + CUDA 交叉验证） |
+| [literature/phase_field_2d_implementation_plan.md](literature/phase_field_2d_implementation_plan.md) | 相场 LB + 无量纲框架 2D 实现（Yang SI 逐字公式 S10-S41，含 MRT 矩定义） |
 | [literature/SC_vs_phasefield_and_3D_migration_guide.md](literature/SC_vs_phasefield_and_3D_migration_guide.md) | Yang SC→相场转变 + 2D→3D 迁移 + 自研路线（复制自 hydrate 仓库） |
-| [literature/phase_field_2d_implementation_plan.md](literature/phase_field_2d_implementation_plan.md) | 相场 LB + 无量纲框架 2D 实现（Yang SI 逐字公式 S10-S41）（复制自 hydrate 仓库） |
 | [literature/yang_papers_pdf_deep_analysis.md](literature/yang_papers_pdf_deep_analysis.md) | Yang 五篇 PDF 直读权威分析（复制自 hydrate 仓库） |
 | [literature/hydrate_formation_thermodynamics.md](literature/hydrate_formation_thermodynamics.md) | 水合物形成热力学总纲（双场表示/软钉扎/自限终态）（复制自 hydrate 仓库，集成用） |
+| [HUANG_SCMP_VALIDATION_GUIDE.md](HUANG_SCMP_VALIDATION_GUIDE.md) | Huang SCMP 验证指南（相场对齐 SC 的验证任务清单） |
 
 ## 核心文档
 

@@ -13,6 +13,8 @@ from jax_lbm.pf.phase_field import (
     run_poiseuille,
     conservative_ac_step,
     tanh_interface_profile,
+    run_lid_driven_cavity,
+    ghia_uy_at,
 )
 from jax_lbm.collision import collision_bgk, equilibrium, macroscopic
 from jax_lbm.d2q9_bgk import streaming
@@ -24,14 +26,18 @@ class TestStage0SinglePhaseNS:
     def test_poiseuille_profile(self):
         """Velocity profile matches analytic parabola (< 2% L2 relative error)."""
         nx, ny = 64, 32
-        u_profile, u_exact = run_poiseuille(nx=nx, ny=ny, omega=1.0, gx=1e-4, n_steps=8000)
+        u_profile, u_exact = run_poiseuille(
+            nx=nx, ny=ny, omega=1.0, gx=1e-4, n_steps=8000
+        )
         # skip wall rows (y=0,1,ny-2,ny-1) for comparison
         interior = slice(2, ny - 2)
-        err = jnp.linalg.norm(u_profile[interior] - u_exact[interior]) / jnp.linalg.norm(
-            u_exact[interior]
-        )
+        err = jnp.linalg.norm(
+            u_profile[interior] - u_exact[interior]
+        ) / jnp.linalg.norm(u_exact[interior])
         assert float(err) < 0.02, f"Poiseuille L2 rel err = {float(err):.4f} (>2%)"
-        assert float(u_profile[interior].max()) > 0.5 * float(u_exact.max()), "flow not developed"
+        assert float(u_profile[interior].max()) > 0.5 * float(u_exact.max()), (
+            "flow not developed"
+        )
 
     def test_no_slip_walls(self):
         """Velocity is (near) zero at the no-slip walls."""
@@ -53,6 +59,31 @@ class TestStage0SinglePhaseNS:
         rho1sum = float(jnp.sum(f))
         assert abs(rho1sum - rho0sum) / rho0sum < 1e-6, "mass not conserved"
 
+    def test_lid_driven_cavity_vs_ghia(self):
+        """Lid-driven cavity vertical-centreline u(y) vs Ghia (Re=100)."""
+        nx = ny = 96
+        u_lid = 0.05
+        # Re = u_lid·L/ν = 100 → ν = u_lid·L/100; ν = (1/ω − 0.5)/3
+        nu = u_lid * nx / 100.0
+        omega = 1.0 / (0.5 + 3.0 * nu)
+        u_centerline, _ = run_lid_driven_cavity(
+            nx=nx, ny=ny, u_lid=u_lid, omega=omega, n_steps=30000
+        )
+        # compare interior points (exclude wall layers) to Ghia reference
+        errs = []
+        for y_norm in (0.1, 0.25, 0.5, 0.75, 0.9):
+            u_ghia = ghia_uy_at(y_norm) * u_lid
+            # map normalised y (0..1) to lattice y (1..ny-2)
+            y_lat = 1 + int(round(y_norm * (ny - 3)))
+            u_sim = float(u_centerline[y_lat])
+            if abs(u_ghia) > 1e-3:
+                errs.append(abs(u_sim - u_ghia) / abs(u_ghia))
+        assert len(errs) > 0
+        max_err = max(errs)
+        # BGK LBM cavity at 96²: ~15% centreline error is typical (Ghia is a
+        # fine-grid benchmark); 25% confirms the cavity vortex structure.
+        assert max_err < 0.25, f"cavity max rel err vs Ghia = {max_err:.3f} (>25%)"
+
 
 class TestStage1ConservativeAC:
     """Stage 1: conservative Allen-Cahn order-parameter evolution (no flow)."""
@@ -72,7 +103,7 @@ class TestStage1ConservativeAC:
         total0 = float(phi0.sum())
         total1 = float(phi.sum())
         assert abs(total1 - total0) / total0 < 0.02, (
-            f"AC φ drift = {abs(total1-total0)/total0:.4f} (>2%)"
+            f"AC φ drift = {abs(total1 - total0) / total0:.4f} (>2%)"
         )
 
     def test_profile_shape(self):

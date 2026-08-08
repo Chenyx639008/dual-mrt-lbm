@@ -257,15 +257,15 @@ class ModelDefinition:
         params: dict[str, Any] = {}
         params["pf_mode"] = int(pf.get("pf_mode", 0))
         params["pf_scheme"] = str(pf.get("pf_scheme", "conservative_ac"))
-        params["pf_W"] = float(pf.get("pf_W", 3.0))         # interface width (lu)
-        params["pf_M"] = float(pf.get("pf_M", 0.02))        # mobility
+        params["pf_W"] = float(pf.get("pf_W", 3.0))  # interface width (lu)
+        params["pf_M"] = float(pf.get("pf_M", 0.02))  # mobility
         params["pf_sigma"] = float(pf.get("pf_sigma", 0.01))  # surface tension
         params["pf_rho_g"] = float(pf.get("pf_rho_g", 0.001))
         params["pf_rho_w"] = float(pf.get("pf_rho_w", 1.0))
         params["pf_mu_g"] = float(pf.get("pf_mu_g", 0.1))
         params["pf_mu_w"] = float(pf.get("pf_mu_w", 0.1))
         params["pf_theta_deg"] = float(pf.get("pf_theta_deg", 90.0))
-        params["pf_tau"] = float(pf.get("pf_tau", 0.8))     # NS relaxation
+        params["pf_tau"] = float(pf.get("pf_tau", 0.8))  # NS relaxation
         # droplet initial condition (Stage 2)
         params["pf_R0"] = float(pf.get("pf_R0", 30.0))
         params["pf_xc"] = float(pf.get("pf_xc", 0.0))

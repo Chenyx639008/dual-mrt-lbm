@@ -1,6 +1,17 @@
 // main.cu 文件是程序的入口点，负责初始化、执行和清理工作
 //9.1坂本拟加入，断点处理
 
+#ifdef PF_BUILD
+// ── Phase-field build: minimal standalone main (self-contained module) ──
+#include <cstdio>
+#include "../include/pf_ns_2d.h"
+int main(int argc, char** argv) {
+    cudaSetDevice(0);
+    const char* params_path = (argc >= 2) ? argv[1] : "params.txt";
+    return run_pf_ns_2d(params_path);
+}
+#else
+
 #include <iomanip>
 #include <string>
 #include <cstdlib>
@@ -170,3 +181,5 @@ int main(int argc, char** argv){
     cudaDeviceReset();
     return 0;
 }
+
+#endif  // !PF_BUILD

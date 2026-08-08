@@ -147,3 +147,11 @@ data/file/
 # Compiled Huang SCMP binaries
 lbm_mrt/solver/mcmp_huang_*
 lbm_mrt/solver/mcmp_huang_unified
+
+# Compiled phase-field pf binary
+lbm_mrt/solver/pf_ns_2d_*
+
+# Phase-field literature: large PDFs & extracted images (keep md/json only)
+phasefield_LBM/*.pdf
+phasefield_LBM/output/*_images/
+research/literature/*.pdf
